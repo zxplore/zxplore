@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- zexplore app icon: layered ZFS datasets + a snapshot/replicate branch.
+       Teal brand tile; white "dataset" plates with name-rows; amber branch to a
+       replica node = snapshot/send, the tool's essence. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#66cabf"/>
+      <stop offset="1" stop-color="#2f7f97"/>
+    </linearGradient>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e7f5f2"/>
+    </linearGradient>
+    <filter id="sh" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="7" stdDeviation="9" flood-color="#0b2a30" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+
+  <!-- rounded app tile -->
+  <rect x="16" y="16" width="480" height="480" rx="116" fill="url(#bg)"/>
+
+  <!-- stacked dataset plates (bottom → top), offset for depth -->
+  <g filter="url(#sh)">
+    <rect x="116" y="300" width="280" height="66" rx="18" fill="url(#plate)" opacity="0.55"/>
+    <rect x="116" y="222" width="280" height="66" rx="18" fill="url(#plate)" opacity="0.80"/>
+    <rect x="116" y="144" width="280" height="66" rx="18" fill="url(#plate)"/>
+  </g>
+
+  <!-- dataset name-rows on each plate -->
+  <g fill="#2f7f97">
+    <rect x="140" y="171" width="150" height="12" rx="6" opacity="0.85"/>
+    <rect x="140" y="249" width="120" height="12" rx="6" opacity="0.60"/>
+    <rect x="140" y="327" width="100" height="12" rx="6" opacity="0.45"/>
+  </g>
+
+  <!-- snapshot / replicate branch: node on the top plate → replica dot -->
+  <g>
+    <path d="M356 177 C 408 177, 420 122, 420 96" stroke="#f0b064" stroke-width="11" fill="none" stroke-linecap="round"/>
+    <circle cx="356" cy="177" r="15" fill="#f0b064"/>
+    <circle cx="420" cy="86" r="19" fill="#f0b064"/>
+  </g>
+</svg>

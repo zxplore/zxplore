@@ -10,3 +10,6 @@ __pycache__/
 /zexplore-bin
 /zexplore
 *.o
+
+# rendered icon rasters
+assets/*.png
