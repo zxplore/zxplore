@@ -10,14 +10,36 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 func main() {
+	elevate()
 	p := tea.NewProgram(newModel(), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "zexplore:", err)
 		os.Exit(1)
 	}
+}
+
+// elevate re-execs under sudo when not root — ZFS create/send/recv/mount need
+// it. Matches the bash tool's behaviour. If sudo is missing we continue as-is
+// (read-only `zfs list` still works where the user has delegated permission).
+func elevate() {
+	if os.Geteuid() == 0 {
+		return
+	}
+	sudo, err := exec.LookPath("sudo")
+	if err != nil {
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	argv := append([]string{"sudo", exe}, os.Args[1:]...)
+	_ = syscall.Exec(sudo, argv, os.Environ()) // replaces this process on success
 }
