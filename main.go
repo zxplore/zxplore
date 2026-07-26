@@ -18,7 +18,11 @@ import (
 
 func main() {
 	elevate()
-	p := tea.NewProgram(newModel(), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// NB: no mouse grab (WithMouseCellMotion). Grabbing the mouse would let the
+	// app receive clicks, but it DISABLES the terminal's native selection,
+	// right-click menu, and copy-paste — which is the "basic stuff" people
+	// expect. Keyboard-first drives the app; the terminal keeps the mouse.
+	p := tea.NewProgram(newModel(), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "zexplore:", err)
 		os.Exit(1)
