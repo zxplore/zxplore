@@ -1,21 +1,26 @@
-// model.go — the bubbletea TUI. This is the F1 filesystem browser: a scrolling
-// dataset list on the left, a live dossier (properties + snapshots) on the
-// right. F2 transfer / F3 restore / F4 pools follow the same Model pattern.
+// model.go — the bubbletea TUI.
 //
-// zexplore is a terminal UI in the spirit of k9s — rich, full-screen, keyboard
-// first (mouse enabled) — not a native window. It runs on any ZFS system.
+// Three modes so far:
+//
+//	browse    — the F1 filesystem browser: dataset list + live dossier.
+//	favorites — saved quick-connects (WinSCP-style saved sessions): pick + jump.
+//	connect   — a text input to dial a NEW [user@]host:pool and save it.
+//
+// zexplore is a terminal UI in the spirit of k9s — rich, keyboard first (mouse
+// enabled) — running on any ZFS system. Browsing a favorite that points at a
+// remote host re-homes the whole browser there over SSH.
 package main
 
 import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
 // ── Styles ───────────────────────────────────────────────────────────────────
-// Teal = the zexplore brand; green = the kldload badge; blue = focus/cursor.
 var (
 	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#0b1220")).Background(lipgloss.Color("#5fc4bc")).Padding(0, 1)
 	badgeStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#0b1220")).Background(lipgloss.Color("#4cb98a")).Padding(0, 1)
@@ -25,21 +30,39 @@ var (
 	paneFocus   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#5ab0ff"))
 	cursorStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#0b1220")).Background(lipgloss.Color("#5ab0ff"))
 	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	okStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#4cb98a"))
+)
+
+type uiMode int
+
+const (
+	modeBrowse uiMode = iota
+	modeFavorites
+	modeConnect
 )
 
 type model struct {
-	host     Host
-	datasets []Dataset
-	cursor   int
-	dossier  string
-	width    int
-	height   int
-	err      string
-	kldload  bool
+	host      Host
+	datasets  []Dataset
+	cursor    int
+	dossier   string
+	width     int
+	height    int
+	err       string
+	status    string
+	kldload   bool
+	mode      uiMode
+	favorites []Favorite
+	favCursor int
+	input     textinput.Model
 }
 
 func newModel() model {
-	m := model{host: LocalHost(), kldload: IsKldload()}
+	ti := textinput.New()
+	ti.Placeholder = "user@host:pool/path   (blank host = local)"
+	ti.CharLimit = 256
+	ti.Width = 48
+	m := model{host: LocalHost(), kldload: IsKldload(), input: ti}
 	m.reload()
 	return m
 }
@@ -69,47 +92,170 @@ func (m *model) refreshDossier() {
 	}
 }
 
+// connect re-homes the browser at a favorite's host + lands on its path.
+func (m model) connect(f Favorite) model {
+	m.host = f.Host()
+	m.cursor = 0
+	m.reload()
+	if f.Path != "" {
+		for i, d := range m.datasets {
+			if d.Name == f.Path {
+				m.cursor = i
+				break
+			}
+		}
+		m.refreshDossier()
+	}
+	if m.err != "" {
+		m.status = "✗ " + m.host.Label() + ": " + m.err
+	} else {
+		m.status = "connected: " + f.Target()
+	}
+	return m
+}
+
+func (m *model) bookmarkCurrent() {
+	if len(m.datasets) == 0 {
+		return
+	}
+	ds := m.datasets[m.cursor].Name
+	f := Favorite{Name: (Favorite{SSH: m.host.SSH, Path: ds}).Target(), SSH: m.host.SSH, Path: ds}
+	m.favorites = AddFavorite(LoadFavorites(), f)
+	_ = SaveFavorites(m.favorites)
+	m.status = "bookmarked: " + f.Name
+}
+
 func (m model) Init() tea.Cmd { return nil }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		return m, nil
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "esc", "ctrl+c":
+		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
-		case "down", "j":
-			if m.cursor < len(m.datasets)-1 {
-				m.cursor++
-				m.refreshDossier()
+		}
+		switch m.mode {
+		case modeFavorites:
+			return m.updateFavorites(msg), nil
+		case modeConnect:
+			return m.updateConnect(msg)
+		default:
+			if s := msg.String(); s == "q" || s == "esc" {
+				return m, tea.Quit
 			}
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-				m.refreshDossier()
-			}
-		case "g", "home":
-			m.cursor = 0
-			m.refreshDossier()
-		case "G", "end":
-			if len(m.datasets) > 0 {
-				m.cursor = len(m.datasets) - 1
-				m.refreshDossier()
-			}
-		case "r":
-			m.reload()
+			return m.updateBrowse(msg), nil
 		}
 	}
 	return m, nil
 }
 
+func (m model) updateBrowse(msg tea.KeyMsg) model {
+	switch msg.String() {
+	case "down", "j":
+		if m.cursor < len(m.datasets)-1 {
+			m.cursor++
+			m.refreshDossier()
+		}
+	case "up", "k":
+		if m.cursor > 0 {
+			m.cursor--
+			m.refreshDossier()
+		}
+	case "g", "home":
+		m.cursor = 0
+		m.refreshDossier()
+	case "G", "end":
+		if len(m.datasets) > 0 {
+			m.cursor = len(m.datasets) - 1
+			m.refreshDossier()
+		}
+	case "r":
+		m.reload()
+		m.status = "reloaded"
+	case "c":
+		m.favorites = LoadFavorites()
+		m.favCursor = 0
+		m.mode = modeFavorites
+	case "b":
+		m.bookmarkCurrent()
+	}
+	return m
+}
+
+func (m model) updateFavorites(msg tea.KeyMsg) model {
+	switch msg.String() {
+	case "esc", "c", "q":
+		m.mode = modeBrowse
+	case "down", "j":
+		if m.favCursor < len(m.favorites)-1 {
+			m.favCursor++
+		}
+	case "up", "k":
+		if m.favCursor > 0 {
+			m.favCursor--
+		}
+	case "n":
+		m.input.SetValue("")
+		m.input.Focus()
+		m.mode = modeConnect
+	case "d":
+		if m.favCursor < len(m.favorites) {
+			m.favorites = append(m.favorites[:m.favCursor], m.favorites[m.favCursor+1:]...)
+			_ = SaveFavorites(m.favorites)
+			if m.favCursor >= len(m.favorites) && m.favCursor > 0 {
+				m.favCursor--
+			}
+		}
+	case "enter":
+		if m.favCursor >= 0 && m.favCursor < len(m.favorites) {
+			f := m.favorites[m.favCursor]
+			m.mode = modeBrowse
+			return m.connect(f)
+		}
+	}
+	return m
+}
+
+func (m model) updateConnect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.mode = modeFavorites
+		return m, nil
+	case "enter":
+		v := strings.TrimSpace(m.input.Value())
+		m.mode = modeBrowse
+		if v != "" {
+			f := ParseTarget(v)
+			m.favorites = AddFavorite(LoadFavorites(), f)
+			_ = SaveFavorites(m.favorites)
+			return m.connect(f), nil
+		}
+		return m, nil
+	default:
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
+	}
+}
+
+// ── View ─────────────────────────────────────────────────────────────────────
 func (m model) View() string {
 	if m.width == 0 {
 		return "loading…"
 	}
+	switch m.mode {
+	case modeFavorites:
+		return m.viewFavorites()
+	case modeConnect:
+		return m.viewConnect()
+	default:
+		return m.viewBrowse()
+	}
+}
 
-	// ── header ──
+func (m model) viewBrowse() string {
 	title := titleStyle.Render("zexplore")
 	host := hostStyle.Render("  " + m.host.Label())
 	badge := ""
@@ -118,8 +264,7 @@ func (m model) View() string {
 	}
 	header := lipgloss.JoinHorizontal(lipgloss.Top, title, host, badge)
 
-	// ── body: list | dossier ──
-	bodyH := m.height - 4 // header(1) + footer(1) + pane top/bottom border(2)
+	bodyH := m.height - 4
 	if bodyH < 3 {
 		bodyH = 3
 	}
@@ -127,7 +272,7 @@ func (m model) View() string {
 	if leftW < 24 {
 		leftW = 24
 	}
-	rightW := m.width - leftW - 4 // account for the two panes' borders
+	rightW := m.width - leftW - 4
 	if rightW < 12 {
 		rightW = 12
 	}
@@ -135,13 +280,39 @@ func (m model) View() string {
 	right := paneStyle.Width(rightW).Height(bodyH).Render(m.renderDossier(bodyH))
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
-	// ── footer ──
-	foot := footerStyle.Render(" ↑/↓ move   r reload   q quit     [F1 files]  F2 transfer  F3 restore  F4 pools  (coming)")
-
+	foot := footerStyle.Render(" ↑/↓ move  c connect  b bookmark  r reload  q quit    [F1 files] F2 transfer F3 restore F4 pools (coming)")
+	if m.status != "" {
+		foot = okStyle.Render(" "+m.status) + "\n" + foot
+	}
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, foot)
 }
 
-// renderList draws the (scrolling) dataset list into a w×h area.
+func (m model) viewFavorites() string {
+	title := titleStyle.Render("zexplore") + hostStyle.Render("  quick connect")
+	var b strings.Builder
+	if len(m.favorites) == 0 {
+		b.WriteString(dimStyle.Render("  no saved connections yet — press n to add one\n"))
+	}
+	for i, f := range m.favorites {
+		label := fmt.Sprintf("  %-40s %s", f.Name, dimStyle.Render(f.Target()))
+		if i == m.favCursor {
+			label = cursorStyle.Render(fmt.Sprintf(" %-*s", m.width-2, f.Name+"   "+f.Target()))
+		}
+		b.WriteString(label + "\n")
+	}
+	foot := footerStyle.Render(" ↵ connect   n new   d delete   esc back")
+	box := paneFocus.Width(m.width - 2).Height(m.height - 4).Render(b.String())
+	return lipgloss.JoinVertical(lipgloss.Left, title, box, foot)
+}
+
+func (m model) viewConnect() string {
+	title := titleStyle.Render("zexplore") + hostStyle.Render("  new connection")
+	prompt := "Dial a target — [user@]host:pool/path  (or a local pool/path):\n\n" + m.input.View()
+	box := paneFocus.Width(m.width - 2).Height(m.height - 4).Render(prompt)
+	foot := footerStyle.Render(" ↵ connect + save   esc cancel")
+	return lipgloss.JoinVertical(lipgloss.Left, title, box, foot)
+}
+
 func (m model) renderList(w, h int) string {
 	if m.err != "" {
 		return dimStyle.Render(truncate("error: "+m.err, w))
@@ -178,7 +349,6 @@ func (m model) renderList(w, h int) string {
 	return b.String()
 }
 
-// renderDossier draws the detail pane, clipped to h lines (scroll comes later).
 func (m model) renderDossier(h int) string {
 	lines := strings.Split(m.dossier, "\n")
 	if len(lines) > h {
@@ -187,7 +357,6 @@ func (m model) renderDossier(h int) string {
 	return strings.Join(lines, "\n")
 }
 
-// truncate clips s to n display columns, adding an ellipsis when it cuts.
 func truncate(s string, n int) string {
 	if n < 1 {
 		return ""
@@ -198,14 +367,12 @@ func truncate(s string, n int) string {
 	if n == 1 {
 		return "…"
 	}
-	// byte-truncate is fine for ASCII dataset names; leave room for the ellipsis.
 	for len(s) > 0 && lipgloss.Width(s)+1 > n {
 		s = s[:len(s)-1]
 	}
 	return s + "…"
 }
 
-// padRight pads s with spaces to n display columns.
 func padRight(s string, n int) string {
 	w := lipgloss.Width(s)
 	if w >= n {
