@@ -5,3 +5,8 @@
 .DS_Store
 __pycache__/
 *.pyc
+
+# Go build
+/zexplore-bin
+/zexplore
+*.o
