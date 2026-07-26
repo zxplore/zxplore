@@ -14,6 +14,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -57,6 +58,8 @@ type model struct {
 	favCursor int
 	input     textinput.Model
 	cmdr      commander
+	// connectPane: -1 = connect the browser itself; 0/1 = connect a commander pane.
+	connectPane int
 }
 
 func newModel() model {
@@ -64,9 +67,52 @@ func newModel() model {
 	ti.Placeholder = "user@host:pool/path   (blank host = local)"
 	ti.CharLimit = 256
 	ti.Width = 48
-	m := model{host: LocalHost(), kldload: IsKldload(), input: ti}
+	m := model{host: LocalHost(), kldload: IsKldload(), input: ti, connectPane: -1}
 	m.reload()
 	return m
+}
+
+// applyConnect applies a chosen favorite/target: to a commander pane if we
+// entered connect from the commander, else to the browser itself.
+func (m model) applyConnect(f Favorite) model {
+	if m.connectPane == 0 || m.connectPane == 1 {
+		p := &m.cmdr.panes[m.connectPane]
+		p.host = f.Host()
+		p.location = f.Path
+		p.cursor = 0
+		p.load()
+		if p.err != "" {
+			m.cmdr.status = "✗ " + f.Target() + ": " + p.err
+		} else {
+			m.cmdr.status = "pane → " + f.Target()
+		}
+		m.connectPane = -1
+		m.mode = modeTransfer
+		return m
+	}
+	m.mode = modeBrowse
+	return m.connect(f)
+}
+
+// cancelConnect returns to whichever mode opened the connect flow.
+func (m model) cancelConnect() model {
+	if m.connectPane == 0 || m.connectPane == 1 {
+		m.mode = modeTransfer
+	} else {
+		m.mode = modeBrowse
+	}
+	m.connectPane = -1
+	return m
+}
+
+// snapshotHere takes an ad-hoc snapshot of a dataset and reports it.
+func (m *model) snapshotHere(h Host, ds string) {
+	name := "manual-" + time.Now().Format("20060102-150405")
+	if _, err := SnapshotNow(h, ds, name); err != nil {
+		m.status = "snapshot failed: " + err.Error()
+	} else {
+		m.status = "snapshot: " + ds + "@" + name
+	}
 }
 
 func (m *model) reload() {
@@ -171,6 +217,13 @@ func (m model) updateTransfer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeBrowse
 		m.reload()
 		return m, nil
+	case "c":
+		// connect the ACTIVE pane to a favorite / typed host
+		m.connectPane = m.cmdr.active
+		m.favorites = LoadFavorites()
+		m.favCursor = 0
+		m.mode = modeFavorites
+		return m, nil
 	default:
 		cmd := m.cmdr.update(msg)
 		return m, cmd
@@ -201,11 +254,17 @@ func (m model) updateBrowse(msg tea.KeyMsg) model {
 		m.reload()
 		m.status = "reloaded"
 	case "c":
+		m.connectPane = -1
 		m.favorites = LoadFavorites()
 		m.favCursor = 0
 		m.mode = modeFavorites
 	case "b":
 		m.bookmarkCurrent()
+	case "s":
+		if len(m.datasets) > 0 {
+			m.snapshotHere(m.host, m.datasets[m.cursor].Name)
+			m.reload()
+		}
 	case "f2":
 		m.cmdr = newCommander(m.host, "")
 		m.mode = modeTransfer
@@ -216,7 +275,7 @@ func (m model) updateBrowse(msg tea.KeyMsg) model {
 func (m model) updateFavorites(msg tea.KeyMsg) model {
 	switch msg.String() {
 	case "esc", "c", "q":
-		m.mode = modeBrowse
+		return m.cancelConnect()
 	case "down", "j":
 		if m.favCursor < len(m.favorites)-1 {
 			m.favCursor++
@@ -239,9 +298,7 @@ func (m model) updateFavorites(msg tea.KeyMsg) model {
 		}
 	case "enter":
 		if m.favCursor >= 0 && m.favCursor < len(m.favorites) {
-			f := m.favorites[m.favCursor]
-			m.mode = modeBrowse
-			return m.connect(f)
+			return m.applyConnect(m.favorites[m.favCursor])
 		}
 	}
 	return m
@@ -250,18 +307,16 @@ func (m model) updateFavorites(msg tea.KeyMsg) model {
 func (m model) updateConnect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		m.mode = modeFavorites
-		return m, nil
+		return m.cancelConnect(), nil
 	case "enter":
 		v := strings.TrimSpace(m.input.Value())
-		m.mode = modeBrowse
 		if v != "" {
 			f := ParseTarget(v)
 			m.favorites = AddFavorite(LoadFavorites(), f)
 			_ = SaveFavorites(m.favorites)
-			return m.connect(f), nil
+			return m.applyConnect(f), nil
 		}
-		return m, nil
+		return m.cancelConnect(), nil
 	default:
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)

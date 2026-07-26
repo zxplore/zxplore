@@ -146,6 +146,16 @@ func (c *commander) update(msg tea.KeyMsg) tea.Cmd {
 		a.descend()
 	case "r":
 		a.load()
+	case "s":
+		if e, ok := a.current(); ok && e.kind == entryDataset {
+			name := "manual-" + time.Now().Format("20060102-150405")
+			if _, err := SnapshotNow(a.host, e.name, name); err != nil {
+				c.status = "snapshot failed: " + err.Error()
+			} else {
+				c.status = "snapshot: " + e.name + "@" + name
+				a.load()
+			}
+		}
 	case "f5", " ":
 		return c.replicateCmd()
 	}
