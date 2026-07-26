@@ -180,6 +180,113 @@ func Dossier(h Host, dataset string) string {
 	return b.String()
 }
 
+// ListPools lists pool names (the root datasets) at a host.
+func ListPools(h Host) ([]string, error) {
+	out, err := run(h.command("zpool", "list", "-H", "-o", "name"))
+	if err != nil {
+		return nil, err
+	}
+	var pools []string
+	for _, l := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if l != "" {
+			pools = append(pools, l)
+		}
+	}
+	return pools, nil
+}
+
+// ListChildren lists the immediate child datasets of a dataset (depth 1,
+// excluding the dataset itself).
+func ListChildren(h Host, dataset string) ([]Dataset, error) {
+	out, err := run(h.command("zfs",
+		"list", "-H", "-p", "-o", "name,used,refer", "-t", "filesystem,volume",
+		"-r", "-d", "1", dataset))
+	if err != nil {
+		return nil, err
+	}
+	var rows []Dataset
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		f := strings.Split(line, "\t")
+		if len(f) < 3 || f[0] == dataset {
+			continue
+		}
+		rows = append(rows, Dataset{Name: f[0], Used: human(f[1]), Refer: human(f[2])})
+	}
+	return rows, nil
+}
+
+// shellQuote single-quotes s for safe inclusion in an `sh -c` pipeline.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func sshPrefix(h Host) string {
+	return "ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=8 " + shellQuote(h.SSH)
+}
+
+// incrementalBase returns the newest source snapshot whose short name also
+// exists on the destination — the incremental origin — or "" for a full send.
+func incrementalBase(srcHost Host, srcDs string, dstHost Host, dstPath string) string {
+	dstSnaps, err := ListSnapshots(dstHost, dstPath)
+	if err != nil || len(dstSnaps) == 0 {
+		return ""
+	}
+	have := map[string]bool{}
+	for _, s := range dstSnaps {
+		if i := strings.IndexByte(s.Name, '@'); i >= 0 {
+			have[s.Name[i+1:]] = true
+		}
+	}
+	srcSnaps, err := ListSnapshots(srcHost, srcDs) // creation order (oldest→newest)
+	if err != nil {
+		return ""
+	}
+	base := ""
+	for _, s := range srcSnaps {
+		if i := strings.IndexByte(s.Name, '@'); i >= 0 && have[s.Name[i+1:]] {
+			base = srcDs + "@" + s.Name[i+1:]
+		}
+	}
+	return base
+}
+
+// ReplicatePipeline builds the `sh -c` command that sends srcSnap to
+// dstHost:dstPath — incremental when a common snapshot exists, else full. The
+// target is received readonly + non-automounting so it can't drift out of the
+// incremental chain. Works for any local/remote combination.
+func ReplicatePipeline(srcHost Host, srcSnap string, dstHost Host, dstPath string) string {
+	srcDs := srcSnap
+	if i := strings.IndexByte(srcSnap, '@'); i >= 0 {
+		srcDs = srcSnap[:i]
+	}
+	base := incrementalBase(srcHost, srcDs, dstHost, dstPath)
+
+	send := "zfs send -v "
+	if base != "" {
+		send += "-i " + shellQuote(base) + " "
+	}
+	send += shellQuote(srcSnap)
+	if srcHost.SSH != "" {
+		send = sshPrefix(srcHost) + " " + shellQuote(send)
+	}
+
+	recv := "zfs recv -F -o readonly=on -o canmount=noauto " + shellQuote(dstPath)
+	if dstHost.SSH != "" {
+		recv = sshPrefix(dstHost) + " " + shellQuote(recv)
+	}
+	return send + " | " + recv
+}
+
+// SnapshotNow takes an ad-hoc snapshot of a dataset and returns its full name.
+func SnapshotNow(h Host, dataset, name string) (string, error) {
+	snap := dataset + "@" + name
+	_, err := run(h.command("zfs", "snapshot", snap))
+	return snap, err
+}
+
 // IsKldload reports whether we're on a kldload system, so zexplore can light up
 // the extra primitives (boot environments, etc.). Universal ZFS otherwise.
 func IsKldload() bool {

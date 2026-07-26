@@ -39,6 +39,7 @@ const (
 	modeBrowse uiMode = iota
 	modeFavorites
 	modeConnect
+	modeTransfer
 )
 
 type model struct {
@@ -55,6 +56,7 @@ type model struct {
 	favorites []Favorite
 	favCursor int
 	input     textinput.Model
+	cmdr      commander
 }
 
 func newModel() model {
@@ -132,6 +134,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
+	case replicateDoneMsg:
+		if msg.err != nil {
+			m.cmdr.status = "✗ replicate failed: " + msg.err.Error()
+		} else {
+			m.cmdr.status = "✓ replicated → " + msg.dst
+			if msg.dstIdx >= 0 && msg.dstIdx < 2 {
+				m.cmdr.panes[msg.dstIdx].load()
+			}
+		}
+		return m, nil
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
@@ -141,6 +153,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateFavorites(msg), nil
 		case modeConnect:
 			return m.updateConnect(msg)
+		case modeTransfer:
+			return m.updateTransfer(msg)
 		default:
 			if s := msg.String(); s == "q" || s == "esc" {
 				return m, tea.Quit
@@ -149,6 +163,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m model) updateTransfer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "f1":
+		m.mode = modeBrowse
+		m.reload()
+		return m, nil
+	default:
+		cmd := m.cmdr.update(msg)
+		return m, cmd
+	}
 }
 
 func (m model) updateBrowse(msg tea.KeyMsg) model {
@@ -180,6 +206,9 @@ func (m model) updateBrowse(msg tea.KeyMsg) model {
 		m.mode = modeFavorites
 	case "b":
 		m.bookmarkCurrent()
+	case "f2":
+		m.cmdr = newCommander(m.host, "")
+		m.mode = modeTransfer
 	}
 	return m
 }
@@ -250,9 +279,21 @@ func (m model) View() string {
 		return m.viewFavorites()
 	case modeConnect:
 		return m.viewConnect()
+	case modeTransfer:
+		return m.viewTransfer()
 	default:
 		return m.viewBrowse()
 	}
+}
+
+func (m model) viewTransfer() string {
+	title := titleStyle.Render("zexplore") + hostStyle.Render("  transfer")
+	if m.cmdr.status != "" {
+		title += "   " + okStyle.Render(m.cmdr.status)
+	}
+	body := m.cmdr.view(m.width, m.height-2)
+	foot := footerStyle.Render(" tab switch  ↑/↓ move  ↵ open  F5 replicate →  r reload  esc/F1 back")
+	return lipgloss.JoinVertical(lipgloss.Left, title, body, foot)
 }
 
 func (m model) viewBrowse() string {
