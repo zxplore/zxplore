@@ -1,0 +1,19 @@
+Source: zexplore
+Section: admin
+Priority: optional
+Maintainer: zexplore <hello@zexplore.ca>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Homepage: https://zexplore.ca
+
+Package: zexplore
+Architecture: all
+Depends: ${misc:Depends}, bash, zfsutils-linux | zfs
+Recommends: fzf, pv, mbuffer, python3
+Suggests: libvirt-clients
+Description: A direct interface to your ZFS primitives — not a dashboard
+ zexplore is a fast, keyboard-driven console for OpenZFS: browse datasets and
+ snapshots with a full properties + permissions view, snapshot on tap, point-
+ and-shoot replicate over SSH, explore files inside datasets/snapshots/zvols,
+ and a scoped snapshot/rollback transaction API. Every action is a plain
+ zfs/zpool command — a primitives tool, not a dashboard.

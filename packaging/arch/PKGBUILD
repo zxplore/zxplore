@@ -1,0 +1,21 @@
+# Maintainer: zexplore <hello@zexplore.ca>
+pkgname=zexplore
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="A direct interface to your ZFS primitives — not a dashboard"
+arch=('any')
+url="https://zexplore.ca"
+license=('BSD')
+depends=('bash' 'zfs-utils')
+optdepends=('fzf: interactive console'
+            'pv: replication progress'
+            'mbuffer: replication throughput'
+            'python: transaction API'
+            'libvirt: VM-zvol explore')
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('SKIP')
+package() {
+  cd "$srcdir/$pkgname-$pkgver"
+  make DESTDIR="$pkgdir" PREFIX=/usr install
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

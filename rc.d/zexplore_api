@@ -1,0 +1,13 @@
+#!/bin/sh
+# FreeBSD rc.d script for the zexplore transaction API.
+# PROVIDE: zexplore_api
+# REQUIRE: zfs
+# KEYWORD: shutdown
+. /etc/rc.subr
+name="zexplore_api"
+rcvar="zexplore_api_enable"
+command="/usr/local/bin/zexplore-api"
+command_args="--unix /var/run/zexplore-api.sock &"
+load_rc_config $name
+: ${zexplore_api_enable:="NO"}
+run_rc_command "$1"
