@@ -1,10 +1,13 @@
 // main.go — entry point for zexplore, the ZFS console.
 //
-// zexplore is a terminal UI ("k9s for ZFS"): browse datasets, snapshot on tap,
-// and replicate anywhere — local pool or remote host over SSH. It shells out to
-// the portable zfs/zpool CLI, so one static binary runs on any ZFS system
-// (Linux distros + FreeBSD). On a kldload host it lights up the extra
-// primitives (boot environments, etc.); elsewhere it's plain, universal ZFS.
+// Default: a native GUI (Fyne) — real window, keyboard + mouse, own icon.
+//
+//	zexplore            → GUI
+//	zexplore --tui      → the terminal UI (bubbletea), for headless / SSH / power use
+//
+// Both share the zfs.go engine. It shells out to the portable zfs/zpool CLI, so
+// it runs on any ZFS system (Linux distros + FreeBSD); on a kldload host it
+// lights up the extra primitives (boot environments, etc.).
 package main
 
 import (
@@ -17,11 +20,17 @@ import (
 )
 
 func main() {
-	elevate()
-	// NB: no mouse grab (WithMouseCellMotion). Grabbing the mouse would let the
-	// app receive clicks, but it DISABLES the terminal's native selection,
-	// right-click menu, and copy-paste — which is the "basic stuff" people
-	// expect. Keyboard-first drives the app; the terminal keeps the mouse.
+	if len(os.Args) > 1 && os.Args[1] == "--tui" {
+		elevate() // safe in a terminal — root inherits the tty
+		runTUI()
+		return
+	}
+	// GUI: do NOT sudo-reexec — root can't reach the user's Wayland/X display.
+	// Privileged ZFS ops are elevated per-command (pkexec/sudo-askpass) — TODO.
+	runGUI()
+}
+
+func runTUI() {
 	p := tea.NewProgram(newModel(), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "zexplore:", err)
@@ -30,8 +39,7 @@ func main() {
 }
 
 // elevate re-execs under sudo when not root — ZFS create/send/recv/mount need
-// it. Matches the bash tool's behaviour. If sudo is missing we continue as-is
-// (read-only `zfs list` still works where the user has delegated permission).
+// it. Used only by the TUI path (a terminal); the GUI stays as the user.
 func elevate() {
 	if os.Geteuid() == 0 {
 		return
@@ -45,5 +53,5 @@ func elevate() {
 		return
 	}
 	argv := append([]string{"sudo", exe}, os.Args[1:]...)
-	_ = syscall.Exec(sudo, argv, os.Environ()) // replaces this process on success
+	_ = syscall.Exec(sudo, argv, os.Environ())
 }
