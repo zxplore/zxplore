@@ -136,27 +136,74 @@ func ListSnapshots(h Host, dataset string) ([]Snapshot, error) {
 	return rows, nil
 }
 
-// Dossier renders a human-readable detail block for the highlighted dataset:
-// space, key properties, and recent snapshots. Mirrors the bash preview.
-func Dossier(h Host, dataset string) string {
-	props := []string{
-		"type", "used", "referenced", "available", "compression", "compressratio",
-		"recordsize", "mountpoint", "readonly", "encryption", "keystatus", "origin", "creation",
-	}
-	out, err := run(h.command("zfs", "get", "-H", "-o", "property,value",
-		strings.Join(props, ","), dataset))
+// singleProp reads one property value ("?" on error).
+func singleProp(h Host, dataset, prop string) string {
+	out, err := run(h.command("zfs", "get", "-H", "-o", "value", prop, dataset))
 	if err != nil {
-		return fmt.Sprintf("(cannot read %s: %v)", dataset, err)
+		return "?"
 	}
+	return strings.TrimSpace(out)
+}
+
+// Dossier renders a FULL detail block for a dataset — nothing curated:
+//   - EVERY ZFS property, with its source (local / inherited / received / default)
+//   - both permission layers: POSIX mode + ACLs on the mountpoint, AND the
+//     kernel `zfs allow` delegations
+//   - every snapshot (newest last)
+//
+// The UI pane is scrollable, so we show it all rather than a subset.
+func Dossier(h Host, dataset string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n\n", dataset)
-	for _, line := range strings.Split(out, "\n") {
-		f := strings.Split(line, "\t")
-		if len(f) < 2 || f[1] == "-" {
-			continue
+	fmt.Fprintf(&b, "%s   [%s]\n\n", dataset, singleProp(h, dataset, "type"))
+
+	// ── every property, with source ──
+	b.WriteString("── properties  (name = value  [source]) ──\n")
+	out, err := run(h.command("zfs", "get", "-H", "-o", "property,value,source", "all", dataset))
+	if err != nil {
+		fmt.Fprintf(&b, "  (cannot read %s: %v)\n", dataset, err)
+	} else {
+		for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+			f := strings.Split(line, "\t")
+			if len(f) < 2 {
+				continue
+			}
+			src := ""
+			if len(f) >= 3 && f[2] != "-" && f[2] != "" {
+				src = "   [" + f[2] + "]"
+			}
+			fmt.Fprintf(&b, "  %-26s %s%s\n", f[0], f[1], src)
 		}
-		fmt.Fprintf(&b, "  %-14s %s\n", f[0], f[1])
 	}
+
+	// ── permissions: POSIX + ACL on the mountpoint, then ZFS delegations ──
+	b.WriteString("\n── permissions ──\n")
+	mp := singleProp(h, dataset, "mountpoint")
+	if strings.HasPrefix(mp, "/") {
+		if o, e := run(h.command("ls", "-ldh", mp)); e == nil {
+			fmt.Fprintf(&b, "  POSIX   %s\n", strings.TrimRight(o, "\n"))
+		}
+		if o, e := run(h.command("getfacl", "-p", mp)); e == nil {
+			for _, l := range strings.Split(strings.TrimRight(o, "\n"), "\n") {
+				if l != "" && !strings.HasPrefix(l, "#") {
+					fmt.Fprintf(&b, "  acl     %s\n", l)
+				}
+			}
+		}
+	} else {
+		fmt.Fprintf(&b, "  POSIX   (mountpoint: %s)\n", mp)
+	}
+	if o, e := run(h.command("zfs", "allow", dataset)); e == nil && strings.TrimSpace(o) != "" {
+		b.WriteString("  zfs delegated:\n")
+		for _, l := range strings.Split(strings.TrimRight(o, "\n"), "\n") {
+			if strings.TrimSpace(l) != "" {
+				fmt.Fprintf(&b, "    %s\n", strings.TrimRight(l, " "))
+			}
+		}
+	} else {
+		b.WriteString("  zfs delegated   (none — root only)\n")
+	}
+
+	// ── snapshots ──
 	b.WriteString("\n── snapshots (newest last) ──\n")
 	snaps, err := ListSnapshots(h, dataset)
 	switch {
@@ -165,16 +212,12 @@ func Dossier(h Host, dataset string) string {
 	case len(snaps) == 0:
 		b.WriteString("  (none)\n")
 	default:
-		start := 0
-		if len(snaps) > 12 {
-			start = len(snaps) - 12
-		}
-		for _, sn := range snaps[start:] {
+		for _, sn := range snaps {
 			short := sn.Name
 			if i := strings.IndexByte(short, '@'); i >= 0 {
 				short = short[i+1:]
 			}
-			fmt.Fprintf(&b, "  %-24s %8s  %s\n", short, sn.Used, sn.Creation)
+			fmt.Fprintf(&b, "  %-30s %8s  %s\n", short, sn.Used, sn.Creation)
 		}
 	}
 	return b.String()

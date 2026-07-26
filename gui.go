@@ -21,8 +21,24 @@ import (
 //go:embed assets/zexplore.svg
 var iconSVG []byte
 
+// compactTheme trims Fyne's default padding so the dataset list renders tight
+// (single-spaced) and the whole UI is denser — matching the dossier pane and
+// reading more like a pro data tool than a spacious form.
+type compactTheme struct{ fyne.Theme }
+
+func (t compactTheme) Size(name fyne.ThemeSizeName) float32 {
+	switch name {
+	case theme.SizeNameInnerPadding:
+		return 3
+	case theme.SizeNamePadding:
+		return 2
+	}
+	return t.Theme.Size(name)
+}
+
 func runGUI() {
 	a := app.NewWithID("ca.zexplore")
+	a.Settings().SetTheme(compactTheme{theme.DefaultTheme()})
 	a.SetIcon(fyne.NewStaticResource("zexplore.svg", iconSVG))
 
 	host := LocalHost()
