@@ -1,10 +1,10 @@
-# Maintainer: zxplor <hello@zxplor.ca>
-pkgname=zxplor
+# Maintainer: zxplore <hello@zxplore.ca>
+pkgname=zxplore
 pkgver=0.1.0
 pkgrel=1
 pkgdesc="A direct interface to your ZFS primitives — not a dashboard"
 arch=('any')
-url="https://zxplor.ca"
+url="https://zxplore.ca"
 license=('BSD')
 depends=('bash' 'zfs-utils')
 optdepends=('fzf: interactive console'

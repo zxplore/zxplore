@@ -749,8 +749,8 @@ func RunReplicate(pipeline string) error {
 // snapshots (and any clones/bookmarks of them). hold/release use a fixed tag.
 func Rollback(h Host, snapshot string) error        { return zfsAdmin(h, "rollback", "-r", snapshot) }
 func Clone(h Host, snapshot, target string) error   { return zfsAdmin(h, "clone", snapshot, target) }
-func HoldSnap(h Host, snapshot string) error        { return zfsAdmin(h, "hold", "zxplor", snapshot) }
-func ReleaseSnap(h Host, snapshot string) error     { return zfsAdmin(h, "release", "zxplor", snapshot) }
+func HoldSnap(h Host, snapshot string) error        { return zfsAdmin(h, "hold", "zxplore", snapshot) }
+func ReleaseSnap(h Host, snapshot string) error     { return zfsAdmin(h, "release", "zxplore", snapshot) }
 func DestroySnapshot(h Host, snapshot string) error { return zfsAdmin(h, "destroy", snapshot) }
 
 // PoolsOverview renders a compact machine overview: every imported pool with its
@@ -930,7 +930,7 @@ func SnapshotNow(h Host, dataset, name string) (string, error) {
 	return snap, err
 }
 
-// IsKldload reports whether we're on a kldload system, so zxplor can light up
+// IsKldload reports whether we're on a kldload system, so zxplore can light up
 // the extra primitives (boot environments, etc.). Universal ZFS otherwise.
 func IsKldload() bool {
 	for _, p := range []string{"/usr/local/bin/kbe", "/etc/kldload"} {

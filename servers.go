@@ -1,5 +1,5 @@
 // servers.go — the saved-server store + SSH key setup (the "WinSCP sessions" of
-// zxplor). A Server is a named connection (host/port/user/path) authenticated by
+// zxplore). A Server is a named connection (host/port/user/path) authenticated by
 // an SSH KEY. Key-first by design: you paste, pick, or generate a key, then use
 // your password ONCE to install the public key on the server (ssh-copy-id style).
 // Passwords are never stored — only the server record + a path to the key.
@@ -44,7 +44,7 @@ func (s Server) toHost() Host {
 
 // ── persistence ──────────────────────────────────────────────────────────────
 
-func zxplorConfigDir() string {
+func zxploreConfigDir() string {
 	dir := os.Getenv("XDG_CONFIG_HOME")
 	if dir == "" {
 		home, err := os.UserHomeDir()
@@ -53,11 +53,11 @@ func zxplorConfigDir() string {
 		}
 		dir = filepath.Join(home, ".config")
 	}
-	return filepath.Join(dir, "zxplor")
+	return filepath.Join(dir, "zxplore")
 }
 
-func serversPath() string { return filepath.Join(zxplorConfigDir(), "servers.json") }
-func keysDir() string     { return filepath.Join(zxplorConfigDir(), "keys") }
+func serversPath() string { return filepath.Join(zxploreConfigDir(), "servers.json") }
+func keysDir() string     { return filepath.Join(zxploreConfigDir(), "keys") }
 
 // LoadServers reads saved servers (nil if none / unreadable).
 func LoadServers() []Server {
@@ -141,7 +141,7 @@ func GenerateKey(name string) (string, error) {
 	kp := keyPathFor(name)
 	_ = os.Remove(kp)
 	_ = os.Remove(kp + ".pub")
-	cmd := exec.Command("ssh-keygen", "-t", "ed25519", "-N", "", "-C", "zxplor-"+name, "-f", kp)
+	cmd := exec.Command("ssh-keygen", "-t", "ed25519", "-N", "", "-C", "zxplore-"+name, "-f", kp)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("ssh-keygen: %v: %s", err, strings.TrimSpace(string(out)))
 	}

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <!-- zxplor app icon: layered ZFS datasets + a snapshot/replicate branch.
+  <!-- zxplore app icon: layered ZFS datasets + a snapshot/replicate branch.
        Teal brand tile; white "dataset" plates with name-rows; amber branch to a
        replica node = snapshot/send, the tool's essence. -->
   <defs>

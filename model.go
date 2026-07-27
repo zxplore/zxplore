@@ -6,7 +6,7 @@
 //	favorites — saved quick-connects (WinSCP-style saved sessions): pick + jump.
 //	connect   — a text input to dial a NEW [user@]host:pool and save it.
 //
-// zxplor is a terminal UI in the spirit of k9s — rich, keyboard first (mouse
+// zxplore is a terminal UI in the spirit of k9s — rich, keyboard first (mouse
 // enabled) — running on any ZFS system. Browsing a favorite that points at a
 // remote host re-homes the whole browser there over SSH.
 package main
@@ -342,7 +342,7 @@ func (m model) View() string {
 }
 
 func (m model) viewTransfer() string {
-	title := titleStyle.Render("zxplor") + hostStyle.Render("  transfer")
+	title := titleStyle.Render("zxplore") + hostStyle.Render("  transfer")
 	if m.cmdr.status != "" {
 		title += "   " + okStyle.Render(m.cmdr.status)
 	}
@@ -352,7 +352,7 @@ func (m model) viewTransfer() string {
 }
 
 func (m model) viewBrowse() string {
-	title := titleStyle.Render("zxplor")
+	title := titleStyle.Render("zxplore")
 	host := hostStyle.Render("  " + m.host.Label())
 	badge := ""
 	if m.kldload {
@@ -384,7 +384,7 @@ func (m model) viewBrowse() string {
 }
 
 func (m model) viewFavorites() string {
-	title := titleStyle.Render("zxplor") + hostStyle.Render("  quick connect")
+	title := titleStyle.Render("zxplore") + hostStyle.Render("  quick connect")
 	var b strings.Builder
 	if len(m.favorites) == 0 {
 		b.WriteString(dimStyle.Render("  no saved connections yet — press n to add one\n"))
@@ -402,7 +402,7 @@ func (m model) viewFavorites() string {
 }
 
 func (m model) viewConnect() string {
-	title := titleStyle.Render("zxplor") + hostStyle.Render("  new connection")
+	title := titleStyle.Render("zxplore") + hostStyle.Render("  new connection")
 	prompt := "Dial a target — [user@]host:pool/path  (or a local pool/path):\n\n" + m.input.View()
 	box := paneFocus.Width(m.width - 2).Height(m.height - 4).Render(prompt)
 	foot := footerStyle.Render(" ↵ connect + save   esc cancel")

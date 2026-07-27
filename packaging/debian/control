@@ -1,18 +1,18 @@
-Source: zxplor
+Source: zxplore
 Section: admin
 Priority: optional
-Maintainer: zxplor <hello@zxplor.ca>
+Maintainer: zxplore <hello@zxplore.ca>
 Build-Depends: debhelper-compat (= 13)
 Standards-Version: 4.6.2
-Homepage: https://zxplor.ca
+Homepage: https://zxplore.ca
 
-Package: zxplor
+Package: zxplore
 Architecture: all
 Depends: ${misc:Depends}, bash, zfsutils-linux | zfs
 Recommends: fzf, pv, mbuffer, python3
 Suggests: libvirt-clients
 Description: A direct interface to your ZFS primitives — not a dashboard
- zxplor is a fast, keyboard-driven console for OpenZFS: browse datasets and
+ zxplore is a fast, keyboard-driven console for OpenZFS: browse datasets and
  snapshots with a full properties + permissions view, snapshot on tap, point-
  and-shoot replicate over SSH, explore files inside datasets/snapshots/zvols,
  and a scoped snapshot/rollback transaction API. Every action is a plain

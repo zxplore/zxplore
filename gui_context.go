@@ -3,7 +3,7 @@
 // One gesture for the whole ZFS lifecycle: snapshot, clone/duplicate, replicate
 // or back up to a server, create a boot environment, roll back, edit properties,
 // destroy. Every mutation runs privileged (pkexec / delegated ssh); destructive
-// ones confirm first. This is what makes zxplor feel like a real console — the
+// ones confirm first. This is what makes zxplore feel like a real console — the
 // filesystem as a right-click-managed solution.
 package main
 

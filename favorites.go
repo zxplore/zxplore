@@ -37,7 +37,7 @@ func favoritesPath() string {
 		}
 		dir = filepath.Join(home, ".config")
 	}
-	return filepath.Join(dir, "zxplor", "favorites.json")
+	return filepath.Join(dir, "zxplore", "favorites.json")
 }
 
 // LoadFavorites reads saved favorites (empty slice if none / unreadable).

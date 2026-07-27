@@ -1,4 +1,4 @@
-// gui.go — the native GUI (Fyne). Default surface for zxplor.
+// gui.go — the native GUI (Fyne). Default surface for zxplore.
 //
 // A real window: keyboard navigation AND mouse (click, scroll, right-click),
 // copy-paste, and its own icon — all native, no terminal involved. Shares the
@@ -26,16 +26,16 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-//go:embed assets/zxplor.svg
+//go:embed assets/zxplore.svg
 var iconSVG []byte
 
-// version is the zxplor release, shown top-right and linked to the repo.
+// version is the zxplore release, shown top-right and linked to the repo.
 const version = "0.1.0"
 
-// repoURL / siteURL back the top-right links. NOTE: repoURL is a placeholder
-// until the GitHub remote is wired — fix it in the same commit as the remote.
+// repoURL / siteURL back the top-right links. repoURL points at the project site
+// (operator owns zxplore.dev); there's no public git remote yet.
 const (
-	repoURL = "https://github.com/kldload/zxplor"
+	repoURL = "https://zxplore.dev"
 	siteURL = "https://kldload.com"
 )
 
@@ -49,7 +49,7 @@ const navPage = 12
 // ── theme ──────────────────────────────────────────────────────────────────
 // compactTheme keeps list rows tight (small inner padding) but gives the major
 // regions breathing room (larger between-widget padding), brands the accent
-// zxplor-teal, tints the light background a soft teal off-white (plain white
+// zxplore-teal, tints the light background a soft teal off-white (plain white
 // read as flat), warms the dark background to a brand blue-grey, and turns the
 // selection bar teal. Everything else delegates to GNOME's light/dark variant.
 type compactTheme struct{ fyne.Theme }
@@ -141,7 +141,7 @@ var (
 
 // cnTopic is a custom theme color name the compactTheme resolves to acTopic, so
 // dossier ━━ section headers render blue (and adapt to light/dark) via RichText.
-const cnTopic fyne.ThemeColorName = "zxplorTopic"
+const cnTopic fyne.ThemeColorName = "zxploreTopic"
 
 // topicRE matches a "━━ TITLE ━━" run so those spans can be colored while the
 // rest of the (packed, multi-column) dossier line stays default foreground.
@@ -292,12 +292,12 @@ func (l *navList) TypedKey(e *fyne.KeyEvent) {
 
 // ── window ─────────────────────────────────────────────────────────────────
 func runGUI() {
-	a := app.NewWithID("ca.zxplor")
+	a := app.NewWithID("ca.zxplore")
 	a.Settings().SetTheme(compactTheme{theme.DefaultTheme()})
-	a.SetIcon(fyne.NewStaticResource("zxplor.svg", iconSVG))
+	a.SetIcon(fyne.NewStaticResource("zxplore.svg", iconSVG))
 
 	host := LocalHost()
-	w := a.NewWindow("zxplor — ZFS console")
+	w := a.NewWindow("zxplore — ZFS console")
 	// Normal window (title bar + min/max/close). Fyne has no Maximize() API, but
 	// opening larger than the work area triggers GNOME's auto-maximize.
 	w.Resize(fyne.NewSize(1920, 1200))
@@ -379,7 +379,7 @@ func runGUI() {
 		poolsLabel.SetText(PoolsOverview(host))
 		if listErr != nil {
 			renderDossier("cannot list datasets:\n" + listErr.Error() +
-				"\n\n(zxplor needs permission to read ZFS — run it as root, or grant\n" +
+				"\n\n(zxplore needs permission to read ZFS — run it as root, or grant\n" +
 				" `zfs allow` on the pool.)")
 			return
 		}
@@ -394,7 +394,7 @@ func runGUI() {
 	status := widget.NewLabelWithStyle(host.Label()+badge, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	repoU, _ := url.Parse(repoURL)
 	siteU, _ := url.Parse(siteURL)
-	verLink := widget.NewHyperlink("zxplor v"+version, repoU)
+	verLink := widget.NewHyperlink("zxplore v"+version, repoU)
 	verLink.Alignment = fyne.TextAlignTrailing
 	siteLink := widget.NewHyperlink("powered by kldload.com", siteU)
 	siteLink.Alignment = fyne.TextAlignTrailing
@@ -575,7 +575,7 @@ func runGUI() {
 
 	if listErr != nil {
 		renderDossier("cannot list datasets:\n" + listErr.Error() +
-			"\n\n(zxplor needs permission to read ZFS — run it as root, or grant\n" +
+			"\n\n(zxplore needs permission to read ZFS — run it as root, or grant\n" +
 			" `zfs allow` on the pool.)")
 	} else if len(visible) > 0 {
 		list.selectAt(0)

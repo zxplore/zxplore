@@ -7,8 +7,8 @@ __pycache__/
 *.pyc
 
 # Go build
-/zxplor-bin
-/zxplor
+/zxplore-bin
+/zxplore
 *.o
 
 # rendered icon rasters
