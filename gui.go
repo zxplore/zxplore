@@ -54,6 +54,7 @@ func runGUI() {
 	// Dossier pane (monospace via a fenced markdown block); scrollable.
 	dossier := widget.NewRichText()
 	dossier.Wrapping = fyne.TextWrapOff
+	dossier.Scroll = fyne.ScrollVerticalOnly // scroll itself — don't wrap in an outer Scroll (they fight)
 
 	setDossier := func(i int) {
 		if i >= 0 && i < len(datasets) {
@@ -98,7 +99,7 @@ func runGUI() {
 		widget.NewToolbarSpacer(),
 	)
 
-	split := container.NewHSplit(list, container.NewScroll(dossier))
+	split := container.NewHSplit(list, dossier)
 	split.SetOffset(0.42)
 
 	top := container.NewVBox(header, toolbar)
