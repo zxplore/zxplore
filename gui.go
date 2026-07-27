@@ -100,6 +100,11 @@ func runGUI() {
 	top := container.NewVBox(header, toolbar)
 	w.SetContent(container.NewBorder(top, nil, nil, nil, split))
 
+	// Give the list keyboard focus so ↑/↓ move the selection AND update the
+	// dossier (Fyne fires OnSelected on keyboard nav only when the list is
+	// focused) — same effect as clicking a row.
+	w.Canvas().Focus(list)
+
 	if listErr != nil {
 		dossier.ParseMarkdown("```\ncannot list datasets:\n" + listErr.Error() +
 			"\n\n(zexplore needs permission to read ZFS — run it as root, or grant\n" +

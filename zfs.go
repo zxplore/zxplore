@@ -145,6 +145,88 @@ func singleProp(h Host, dataset, prop string) string {
 	return strings.TrimSpace(out)
 }
 
+// healthSummary surfaces PROBLEMS first: the pool's health verdict, capacity /
+// fragmentation, scrub state, and data / vdev errors — each flagged so trouble
+// is obvious at a glance, before the raw property dump.
+func healthSummary(h Host, dataset string) string {
+	pool := dataset
+	if i := strings.IndexByte(pool, '/'); i >= 0 {
+		pool = pool[:i]
+	}
+	var b strings.Builder
+	var problems []string
+
+	if li, err := run(h.command("zpool", "list", "-H", "-o",
+		"name,health,capacity,fragmentation,free,size,dedupratio", pool)); err == nil {
+		f := strings.Split(strings.TrimRight(li, "\n"), "\t")
+		if len(f) >= 7 {
+			fmt.Fprintf(&b, "  %s   health %s   cap %s   frag %s   free %s/%s   dedup %s\n",
+				f[0], f[1], f[2], f[3], f[4], f[5], f[6])
+			if f[1] != "ONLINE" {
+				problems = append(problems, "pool "+f[1])
+			}
+			if n, e := strconv.Atoi(strings.TrimSuffix(f[2], "%")); e == nil && n >= 80 {
+				problems = append(problems, "capacity "+f[2])
+			}
+		}
+	}
+
+	if st, err := run(h.command("zpool", "status", pool)); err == nil {
+		for _, l := range strings.Split(st, "\n") {
+			ls := strings.TrimSpace(l)
+			switch {
+			case strings.HasPrefix(ls, "scan:"):
+				fmt.Fprintf(&b, "  %s\n", ls)
+			case strings.HasPrefix(ls, "errors:"):
+				fmt.Fprintf(&b, "  %s\n", ls)
+				if !strings.Contains(ls, "No known data errors") {
+					problems = append(problems, "data errors")
+				}
+			}
+		}
+		if vdevErrors(st) {
+			problems = append(problems, "vdev read/write/cksum errors")
+		}
+	}
+
+	if len(problems) == 0 {
+		b.WriteString("  ✓ healthy — no problems detected\n")
+	} else {
+		fmt.Fprintf(&b, "  ⚠ ATTENTION: %s\n", strings.Join(problems, "; "))
+	}
+	return b.String()
+}
+
+// vdevErrors reports whether any vdev row in `zpool status` output carries a
+// nonzero READ/WRITE/CKSUM count.
+func vdevErrors(status string) bool {
+	inConfig := false
+	for _, l := range strings.Split(status, "\n") {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "config:") {
+			inConfig = true
+			continue
+		}
+		if strings.HasPrefix(t, "errors:") {
+			inConfig = false
+		}
+		if !inConfig {
+			continue
+		}
+		f := strings.Fields(t)
+		if len(f) < 5 || f[0] == "NAME" {
+			continue
+		}
+		r, e1 := strconv.Atoi(f[len(f)-3])
+		w, e2 := strconv.Atoi(f[len(f)-2])
+		c, e3 := strconv.Atoi(f[len(f)-1])
+		if e1 == nil && e2 == nil && e3 == nil && (r|w|c) != 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // Dossier renders a FULL detail block for a dataset — nothing curated:
 //   - EVERY ZFS property, with its source (local / inherited / received / default)
 //   - both permission layers: POSIX mode + ACLs on the mountpoint, AND the
@@ -167,11 +249,18 @@ func Dossier(h Host, dataset string) string {
 			if len(f) < 2 {
 				continue
 			}
-			src := ""
-			if len(f) >= 3 && f[2] != "-" && f[2] != "" {
-				src = "   [" + f[2] + "]"
+			tag := ""
+			if len(f) >= 3 {
+				switch {
+				case f[2] == "" || f[2] == "-":
+					tag = "" // read-only / computed — no source
+				case strings.HasPrefix(f[2], "inherited from "):
+					tag = "   [inherited: " + strings.TrimPrefix(f[2], "inherited from ") + "]"
+				default:
+					tag = "   [" + f[2] + "]" // default, local, received, temporary
+				}
 			}
-			fmt.Fprintf(&b, "  %-26s %s%s\n", f[0], f[1], src)
+			fmt.Fprintf(&b, "  %-26s %s%s\n", f[0], f[1], tag)
 		}
 	}
 
