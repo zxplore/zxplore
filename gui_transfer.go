@@ -1,11 +1,15 @@
-// gui_transfer.go — the GUI transfer view: two dataset panes side by side.
+// gui_transfer.go — the GUI transfer view.
 //
-// Each pane lists a host's datasets and can be re-pointed at a remote
-// ([user@]host:pool). Pick a source in one pane, a destination in the other,
-// and "Replicate →" sends the source's latest snapshot into the destination
-// (incremental when a common snapshot exists). ZFS send/recv needs root, and
-// the GUI runs as the user, so the transfer is elevated via pkexec (a polkit
-// prompt), keeping the GUI itself unprivileged (and able to reach the display).
+// Left pane = the LOCAL filesystem (source). Right pane = the TARGET, connected
+// to a remote via "Connect…" ([user@]host:pool/path). Pick a source on the left
+// and (optionally) a destination on the right, then "Replicate →" sends the
+// source's latest snapshot under the destination — incremental when a common
+// snapshot exists. ZFS send/recv needs root and the GUI runs as the user, so the
+// transfer is elevated via pkexec (a polkit prompt), keeping the GUI unprivileged.
+//
+// The target listing is SCOPED to the connected pool/path (ListSubtree), so a
+// delegated user (e.g. one holding only `zfs allow receive` on tank/backups)
+// still sees the target — a full `zfs list` would be denied.
 package main
 
 import (
@@ -22,14 +26,15 @@ import (
 
 type xferPane struct {
 	host     Host
+	location string // "" = list all datasets; else list this path + descendants
 	datasets []Dataset
-	sel      int
 	list     *widget.List
+	sel      int // effective selection (-1 = none)
 	title    *widget.Label
 }
 
 func newXferPane() *xferPane {
-	p := &xferPane{host: LocalHost(), sel: -1}
+	p := &xferPane{sel: -1}
 	p.title = widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	p.list = widget.NewList(
 		func() int { return len(p.datasets) },
@@ -39,23 +44,34 @@ func newXferPane() *xferPane {
 			o.(*widget.Label).SetText(fmt.Sprintf("%s   %s/%s  ×%d", d.Name, d.Used, d.Refer, d.Snaps))
 		},
 	)
+	// Track the effective selection from both mouse (OnSelected) and keyboard
+	// (OnHighlighted, ↑/↓ on a focused pane) so it drives the source/target.
 	p.list.OnSelected = func(i widget.ListItemID) { p.sel = int(i) }
-	p.reload()
+	p.list.OnHighlighted = func(i widget.ListItemID) { p.sel = int(i) }
 	return p
 }
 
 func (p *xferPane) reload() {
-	ds, err := ListDatasets(p.host)
+	var ds []Dataset
+	var err error
+	if p.location == "" {
+		ds, err = ListDatasets(p.host)
+	} else {
+		ds, err = ListSubtree(p.host, p.location)
+	}
 	p.datasets = ds
 	if p.sel >= len(p.datasets) {
 		p.sel = -1
 	}
 	p.list.Refresh()
-	if err != nil {
-		p.title.SetText("● " + p.host.Label() + "   (" + err.Error() + ")")
-	} else {
-		p.title.SetText("● " + p.host.Label())
+	label := "● " + p.host.Label()
+	if p.location != "" {
+		label += ":" + p.location
 	}
+	if err != nil {
+		label += "    ✗ " + err.Error()
+	}
+	p.title.SetText(label)
 }
 
 func (p *xferPane) selectedName() string {
@@ -65,49 +81,69 @@ func (p *xferPane) selectedName() string {
 	return ""
 }
 
+// destination is the chosen dest: the selected dataset, else the connected root.
+func (p *xferPane) destination() string {
+	if d := p.selectedName(); d != "" {
+		return d
+	}
+	return p.location
+}
+
 func (p *xferPane) view(onConnect func()) fyne.CanvasObject {
-	connectBtn := widget.NewButton("Connect…", onConnect)
-	refreshBtn := widget.NewButton("Refresh", func() { p.reload() })
-	top := container.NewBorder(nil, nil, p.title, container.NewHBox(refreshBtn, connectBtn))
-	return container.NewBorder(top, nil, nil, nil, p.list)
+	buttons := container.NewHBox(widget.NewButton("Refresh", func() { p.reload() }))
+	if onConnect != nil {
+		buttons.Add(widget.NewButton("Connect…", onConnect))
+	}
+	head := container.NewBorder(nil, nil, p.title, buttons)
+	return container.NewBorder(head, nil, nil, nil, p.list)
 }
 
 func transferTab(w fyne.Window) fyne.CanvasObject {
-	left := newXferPane()
-	right := newXferPane()
+	left := newXferPane() // LOCAL source
+	left.reload()
+	right := newXferPane() // TARGET
+	right.title.SetText("● (no target — click Connect…)")
 
-	connect := func(p *xferPane) {
+	setTarget := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			right.host = LocalHost()
+			right.location = ""
+		} else {
+			f := ParseTarget(v)
+			right.host = f.Host()
+			right.location = f.Path
+		}
+		right.sel = -1
+		right.reload()
+	}
+	connect := func() {
 		e := widget.NewEntry()
-		e.SetPlaceHolder("user@host:pool   (blank = local)")
-		dialog.ShowForm("Connect this pane", "Connect", "Cancel",
+		e.SetPlaceHolder("user@host:pool/path   (e.g. zexp@10.100.10.142:rpool/zexp-recv)")
+		dlg := dialog.NewForm("Connect target", "Connect", "Cancel",
 			[]*widget.FormItem{widget.NewFormItem("Target", e)},
 			func(ok bool) {
-				if !ok {
-					return
+				if ok {
+					setTarget(e.Text)
 				}
-				v := strings.TrimSpace(e.Text)
-				if v == "" {
-					p.host = LocalHost()
-				} else {
-					p.host = ParseTarget(v).Host()
-				}
-				p.sel = -1
-				p.reload()
 			}, w)
+		e.OnSubmitted = func(string) { setTarget(e.Text); dlg.Hide() } // Enter connects
+		dlg.Resize(fyne.NewSize(560, 170))
+		dlg.Show()
+		w.Canvas().Focus(e)
 	}
 
 	replicate := func(src, dst *xferPane) {
 		s := src.selectedName()
 		if s == "" {
-			dialog.ShowInformation("Replicate", "Select a SOURCE dataset (highlight it in the source pane).", w)
+			dialog.ShowInformation("Replicate", "Select a SOURCE dataset first.", w)
 			return
 		}
-		d := dst.selectedName()
+		d := dst.destination()
 		if d == "" {
-			dialog.ShowInformation("Replicate", "Select a DESTINATION dataset/pool in the other pane (the source lands under it).", w)
+			dialog.ShowInformation("Replicate", "Choose a destination — connect the target pane (and/or select a dataset in it).", w)
 			return
 		}
-		// Resolve the source snapshot (newest, or take one).
 		snap := ""
 		if snaps, _ := ListSnapshots(src.host, s); len(snaps) > 0 {
 			snap = snaps[len(snaps)-1].Name
@@ -123,7 +159,6 @@ func transferTab(w fyne.Window) fyne.CanvasObject {
 		}
 		dstPath := d + "/" + leaf
 		pipeline := ReplicatePipeline(src.host, snap, dst.host, dstPath)
-
 		dialog.ShowConfirm("Replicate",
 			fmt.Sprintf("Send\n  %s\nto\n  %s:%s\n\n(runs as root via pkexec)", snap, dst.host.Label(), dstPath),
 			func(ok bool) {
@@ -148,7 +183,7 @@ func transferTab(w fyne.Window) fyne.CanvasObject {
 	btnRL := widget.NewButton("←  Replicate", func() { replicate(right, left) })
 	bar := container.NewCenter(container.NewHBox(btnLR, widget.NewLabel("        "), btnRL))
 
-	split := container.NewHSplit(left.view(func() { connect(left) }), right.view(func() { connect(right) }))
+	split := container.NewHSplit(left.view(nil), right.view(connect))
 	split.SetOffset(0.5)
 	return container.NewBorder(nil, bar, nil, nil, split)
 }

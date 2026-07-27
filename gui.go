@@ -68,11 +68,11 @@ func runGUI() {
 
 	host := LocalHost()
 	w := a.NewWindow("zexplore — ZFS console")
-	// Fyne has no true Maximize() on the OS window (only fullscreen); open
-	// full-screen so it fills the display by default. F11 toggles back to a
-	// windowed titlebar. The windowed size is a sane fallback.
-	w.Resize(fyne.NewSize(1280, 820))
-	w.SetFullScreen(true)
+	// A normal window with title bar + min/max/close. Fyne has no Maximize()
+	// API, but opening larger than the work area triggers GNOME's auto-maximize
+	// (on by default), so it comes up maximized with normal window controls.
+	w.Resize(fyne.NewSize(1920, 1200))
+	w.CenterOnScreen()
 
 	datasets, listErr := ListDatasets(host)
 
@@ -97,7 +97,12 @@ func runGUI() {
 			o.(*widget.Label).SetText(fmt.Sprintf("%s    %s / %s   ×%d", d.Name, d.Used, d.Refer, d.Snaps))
 		},
 	)
+	// Two update paths, both refresh the dossier live as you move:
+	//   • OnSelected    — mouse click / Space (commits a selection)
+	//   • OnHighlighted — ↑/↓ arrow keys move the focus highlight (Fyne 2.8+)
+	// so keyboard and mouse navigation both drive the detail pane.
 	list.OnSelected = func(i widget.ListItemID) { setDossier(int(i)) }
+	list.OnHighlighted = func(i widget.ListItemID) { setDossier(int(i)) }
 
 	reload := func() {
 		datasets, listErr = ListDatasets(host)
@@ -135,18 +140,10 @@ func runGUI() {
 	)
 	w.SetContent(tabs)
 
-	// Give the list keyboard focus so ↑/↓ move the selection AND update the
-	// dossier (Fyne fires OnSelected on keyboard nav only when the list is
-	// focused) — same effect as clicking a row.
+	// Focus the list so ↑/↓/PgUp/PgDn reach it. Fyne fires OnHighlighted as the
+	// arrows move the highlight (OnSelected on click/Space) — both refresh the
+	// dossier, so keyboard navigation updates the detail pane live.
 	w.Canvas().Focus(list)
-
-	// F11 toggles fullscreen ↔ windowed. Only F11 is handled here; the focused
-	// list still consumes the arrow keys, so navigation is unaffected.
-	w.Canvas().SetOnTypedKey(func(ev *fyne.KeyEvent) {
-		if ev.Name == fyne.KeyF11 {
-			w.SetFullScreen(!w.FullScreen())
-		}
-	})
 
 	if listErr != nil {
 		setDossierText(dossier, "cannot list datasets:\n"+listErr.Error()+

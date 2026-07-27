@@ -350,6 +350,30 @@ func ListChildren(h Host, dataset string) ([]Dataset, error) {
 	return rows, nil
 }
 
+// ListSubtree lists a dataset and all its descendants — used for a scoped
+// target pane so a DELEGATED user (who can't `zfs list` the whole pool, only
+// their allowed dataset) still sees the target. Snapshot counts are skipped
+// (a delegated user often can't enumerate all snapshots).
+func ListSubtree(h Host, path string) ([]Dataset, error) {
+	out, err := run(h.command("zfs", "list", "-H", "-p", "-o", "name,used,refer",
+		"-t", "filesystem,volume", "-r", path))
+	if err != nil {
+		return nil, err
+	}
+	var rows []Dataset
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		f := strings.Split(line, "\t")
+		if len(f) < 3 {
+			continue
+		}
+		rows = append(rows, Dataset{Name: f[0], Used: human(f[1]), Refer: human(f[2])})
+	}
+	return rows, nil
+}
+
 // shellQuote single-quotes s for safe inclusion in an `sh -c` pipeline.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
