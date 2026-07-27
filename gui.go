@@ -102,7 +102,12 @@ func runGUI() {
 	split.SetOffset(0.42)
 
 	top := container.NewVBox(header, toolbar)
-	w.SetContent(container.NewBorder(top, nil, nil, nil, split))
+	browser := container.NewBorder(top, nil, nil, nil, split)
+	tabs := container.NewAppTabs(
+		container.NewTabItem("Browser", browser),
+		container.NewTabItem("Transfer", transferTab(w)),
+	)
+	w.SetContent(tabs)
 
 	// Give the list keyboard focus so ↑/↓ move the selection AND update the
 	// dossier (Fyne fires OnSelected on keyboard nav only when the list is
