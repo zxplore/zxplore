@@ -43,7 +43,11 @@ func runGUI() {
 
 	host := LocalHost()
 	w := a.NewWindow("zexplore — ZFS console")
-	w.Resize(fyne.NewSize(1120, 720))
+	// Fyne has no true Maximize() on the OS window (only fullscreen); open
+	// full-screen so it fills the display by default. F11 toggles back to a
+	// windowed titlebar. The windowed size is a sane fallback.
+	w.Resize(fyne.NewSize(1280, 820))
+	w.SetFullScreen(true)
 
 	datasets, listErr := ListDatasets(host)
 
@@ -104,6 +108,14 @@ func runGUI() {
 	// dossier (Fyne fires OnSelected on keyboard nav only when the list is
 	// focused) — same effect as clicking a row.
 	w.Canvas().Focus(list)
+
+	// F11 toggles fullscreen ↔ windowed. Only F11 is handled here; the focused
+	// list still consumes the arrow keys, so navigation is unaffected.
+	w.Canvas().SetOnTypedKey(func(ev *fyne.KeyEvent) {
+		if ev.Name == fyne.KeyF11 {
+			w.SetFullScreen(!w.FullScreen())
+		}
+	})
 
 	if listErr != nil {
 		dossier.ParseMarkdown("```\ncannot list datasets:\n" + listErr.Error() +
