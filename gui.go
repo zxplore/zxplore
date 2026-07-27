@@ -215,10 +215,19 @@ func card(content fyne.CanvasObject) fyne.CanvasObject {
 // the current selection (the parent keeps it in sync from OnSelected).
 type navList struct {
 	widget.List
-	cursor  int
-	onFind  func()
-	onFunc  func(fyne.KeyName) // F-key section switch
-	onEnter func()             // Enter/Return acts on the current row
+	cursor      int
+	onFind      func()
+	onFunc      func(fyne.KeyName)     // F-key section switch
+	onEnter     func()                 // Enter/Return acts on the current row
+	onSecondary func(*fyne.PointEvent) // right-click → context menu
+}
+
+// TappedSecondary fires on right-click. Row labels don't handle it, so Fyne
+// routes it here; we act on the current (hover-selected) row.
+func (l *navList) TappedSecondary(e *fyne.PointEvent) {
+	if l.onSecondary != nil {
+		l.onSecondary(e)
+	}
 }
 
 func newNavList(length func() int, create func() fyne.CanvasObject, update func(widget.ListItemID, fyne.CanvasObject)) *navList {
@@ -396,10 +405,14 @@ func runGUI() {
 		heading("ZPOOLS — machine overview", acGold),
 		poolsLabel,
 	)
-	toolbar := widget.NewToolbar(
-		widget.NewToolbarAction(theme.ViewRefreshIcon(), reload),
-		widget.NewToolbarSpacer(),
+	toolbar := container.NewHBox(
+		widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), reload),
+		widget.NewButton("Servers…", func() { showServerManager(w, func(Server) {}) }),
+		widget.NewButton("Pools…", func() { showPoolManager(w) }),
 	)
+	if IsKldload() {
+		toolbar.Add(widget.NewButton("Boot Envs…", func() { showBootEnvManager(w) }))
+	}
 	top := container.NewVBox(titleRow, card(poolsHeader), toolbar)
 
 	// ── right pane: read dossier ⇄ inline edit form, toggled by ✎ Edit ──
@@ -480,6 +493,17 @@ func runGUI() {
 		} else {
 			setDossier(int(i))
 		}
+	}
+	// Right-click a dataset → the full lifecycle menu (snapshot / clone /
+	// replicate / boot-env / rollback / edit / destroy), acting on that row.
+	list.onSecondary = func(e *fyne.PointEvent) {
+		if list.cursor < 0 || list.cursor >= len(visible) {
+			return
+		}
+		m := datasetContextMenu(host, visible[list.cursor].Name, w,
+			func() { reload() },
+			func() { editing = true; buildRight() })
+		widget.ShowPopUpMenuAtPosition(m, w.Canvas(), e.AbsolutePosition)
 	}
 
 	rightHead := container.NewBorder(nil, nil, heading("DETAILS", acBlue), editBtn)

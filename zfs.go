@@ -35,7 +35,27 @@ type Snapshot struct {
 // Host is a location the tool operates against: local, or remote over SSH.
 // SSH == "" means local; otherwise it's a "[user@]host" passed to ssh.
 type Host struct {
-	SSH string
+	SSH     string // "" = local; else "[user@]host"
+	Port    int    // 0 = default 22
+	KeyPath string // "" = agent/default keys; else an explicit identity file
+	Jump    string // "" = direct; else a ProxyJump chain "[user@]host[,…]"
+}
+
+// sshOpts returns the extra ssh args for this host: a non-default port, an
+// explicit identity file (IdentitiesOnly so only that key is offered), and a
+// ProxyJump chain (bastion / jump hosts, like an SSH client's -J).
+func (h Host) sshOpts() []string {
+	var o []string
+	if h.Port != 0 && h.Port != 22 {
+		o = append(o, "-p", strconv.Itoa(h.Port))
+	}
+	if h.KeyPath != "" {
+		o = append(o, "-i", h.KeyPath, "-o", "IdentitiesOnly=yes")
+	}
+	if h.Jump != "" {
+		o = append(o, "-o", "ProxyJump="+h.Jump)
+	}
+	return o
 }
 
 // LocalHost returns the local ZFS host.
@@ -60,8 +80,9 @@ func (h Host) command(program string, args ...string) *exec.Cmd {
 		"-o", "BatchMode=yes",
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "ConnectTimeout=8",
-		h.SSH, program,
 	}
+	sshArgs = append(sshArgs, h.sshOpts()...)
+	sshArgs = append(sshArgs, h.SSH, program)
 	sshArgs = append(sshArgs, args...)
 	return exec.Command("ssh", sshArgs...)
 }
@@ -545,6 +566,184 @@ func SetProp(h Host, dataset, prop, value string) error {
 	return zfsAdmin(h, "set", prop+"="+value, dataset)
 }
 
+// zfsAdminStdin is zfsAdmin with data fed on stdin — for ops that read a
+// passphrase (load-key / change-key / create with keyformat=passphrase). The
+// passphrase never touches the command line or disk.
+func zfsAdminStdin(h Host, stdin string, args ...string) error {
+	var cmd *exec.Cmd
+	if h.SSH == "" {
+		cmd = exec.Command("pkexec", append([]string{"zfs"}, args...)...)
+	} else {
+		cmd = h.command("zfs", args...)
+	}
+	cmd.Stdin = strings.NewReader(stdin)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("zfs %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// ── encryption ───────────────────────────────────────────────────────────────
+
+// LoadKey unlocks an encrypted dataset (zfs load-key), feeding the passphrase on
+// stdin. UnloadKey re-locks it. ChangeKey rotates the passphrase. CreateEncrypted
+// makes a new passphrase-encrypted dataset. All privileged.
+func LoadKey(h Host, dataset, passphrase string) error {
+	return zfsAdminStdin(h, passphrase+"\n", "load-key", dataset)
+}
+func UnloadKey(h Host, dataset string) error { return zfsAdmin(h, "unload-key", dataset) }
+func ChangeKey(h Host, dataset, newPassphrase string) error {
+	return zfsAdminStdin(h, newPassphrase+"\n"+newPassphrase+"\n", "change-key", dataset)
+}
+func CreateEncrypted(h Host, name, passphrase string) error {
+	return zfsAdminStdin(h, passphrase+"\n"+passphrase+"\n",
+		"create", "-o", "encryption=on", "-o", "keyformat=passphrase", "-o", "keylocation=prompt", name)
+}
+
+// ── pool operations ──────────────────────────────────────────────────────────
+
+// zpoolAdmin runs a privileged `zpool <args>` (pkexec local / ssh remote).
+func zpoolAdmin(h Host, args ...string) error {
+	var cmd *exec.Cmd
+	if h.SSH == "" {
+		cmd = exec.Command("pkexec", append([]string{"zpool"}, args...)...)
+	} else {
+		cmd = h.command("zpool", args...)
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("zpool %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// ScrubPool starts (or with start=false, stops) a scrub. TrimPool trims free
+// space; ClearPool clears device errors. PoolStatusText returns `zpool status`.
+func ScrubPool(h Host, pool string, start bool) error {
+	if start {
+		return zpoolAdmin(h, "scrub", pool)
+	}
+	return zpoolAdmin(h, "scrub", "-s", pool)
+}
+func TrimPool(h Host, pool string) error  { return zpoolAdmin(h, "trim", pool) }
+func ClearPool(h Host, pool string) error { return zpoolAdmin(h, "clear", pool) }
+func PoolStatusText(h Host, pool string) (string, error) {
+	return run(h.command("zpool", "status", pool))
+}
+
+// adminExec runs an arbitrary privileged command (not just zfs) — pkexec locally,
+// ssh (delegated) remotely. Used for host tools like kldload's `kbe`.
+func adminExec(h Host, argv ...string) error {
+	var cmd *exec.Cmd
+	if h.SSH == "" {
+		cmd = exec.Command("pkexec", argv...)
+	} else {
+		cmd = h.command(argv[0], argv[1:]...)
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s: %v: %s", strings.Join(argv, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// DestroyDataset destroys a dataset recursively. The caller MUST confirm first.
+func DestroyDataset(h Host, dataset string) error { return zfsAdmin(h, "destroy", "-r", dataset) }
+
+// CreateDataset creates a filesystem, or a zvol when volsize != "" (e.g. "10G").
+func CreateDataset(h Host, name, volsize string) error {
+	if volsize != "" {
+		return zfsAdmin(h, "create", "-V", volsize, name)
+	}
+	return zfsAdmin(h, "create", "-p", name)
+}
+
+// RenameDataset renames a dataset (zfs rename).
+func RenameDataset(h Host, oldName, newName string) error {
+	return zfsAdmin(h, "rename", oldName, newName)
+}
+
+// SetMounted mounts or unmounts a dataset.
+func SetMounted(h Host, dataset string, mount bool) error {
+	if mount {
+		return zfsAdmin(h, "mount", dataset)
+	}
+	return zfsAdmin(h, "unmount", dataset)
+}
+
+// BootEnv is one boot-environment restore point — a snapshot of the active boot
+// dataset (the pool's bootfs).
+type BootEnv struct {
+	Snapshot string
+	Created  string
+	Used     string
+}
+
+// bootDataset returns the active boot filesystem from the pool's bootfs (e.g.
+// rpool/ROOT/onyx). We DERIVE it rather than hardcode rpool/ROOT/default — the
+// BE dataset name varies per install (that hardcode is the kbe/krecovery bug).
+// Empty when no bootfs is set (not a boot-environment system).
+func bootDataset(h Host) string {
+	out, err := run(h.command("zpool", "get", "-H", "-o", "value", "bootfs", "rpool"))
+	if err != nil {
+		return ""
+	}
+	if v := strings.TrimSpace(out); v != "" && v != "-" {
+		return v
+	}
+	return ""
+}
+
+// ListBootEnvs lists boot environments — snapshots of the active boot dataset —
+// newest last, and returns the boot dataset itself. Errors clearly on a system
+// with no bootfs (non-kldload).
+func ListBootEnvs(h Host) ([]BootEnv, string, error) {
+	bd := bootDataset(h)
+	if bd == "" {
+		return nil, "", fmt.Errorf("no bootfs set on rpool — not a boot-environment system")
+	}
+	out, err := run(h.command("zfs", "list", "-H", "-t", "snapshot",
+		"-o", "name,used,creation", "-s", "creation", bd))
+	if err != nil {
+		return nil, bd, err
+	}
+	var bes []BootEnv
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		f := strings.Split(line, "\t")
+		if len(f) < 3 {
+			continue
+		}
+		bes = append(bes, BootEnv{Snapshot: f[0], Used: f[1], Created: f[2]})
+	}
+	return bes, bd, nil
+}
+
+// Boot-environment actions (privileged) — direct zfs against the DERIVED boot
+// dataset, so they're correct regardless of the BE name. CreateBootEnv snapshots
+// the running boot dataset; delete/rollback take a full boot-dataset@name snap.
+// (Rollback of the LIVE boot dataset takes effect on reboot; warn the operator.)
+func CreateBootEnv(h Host, name string) error {
+	bd := bootDataset(h)
+	if bd == "" {
+		return fmt.Errorf("no bootfs set — not a boot-environment system")
+	}
+	return zfsAdmin(h, "snapshot", bd+"@"+name)
+}
+func DeleteBootEnv(h Host, snap string) error   { return zfsAdmin(h, "destroy", snap) }
+func RollbackBootEnv(h Host, snap string) error { return zfsAdmin(h, "rollback", "-r", snap) }
+
+// RunReplicate executes a send|recv pipeline (from ReplicatePipeline). The local
+// leg needs root to read/write the pool, so the pipe runs under pkexec; any
+// remote leg carries its own ssh (root can still read the user's key file).
+func RunReplicate(pipeline string) error {
+	out, err := exec.Command("pkexec", "sh", "-c", pipeline).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("replicate: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // Snapshot actions (all privileged). Rollback uses -r so rolling back past newer
 // snapshots works — the GUI WARNS first, because -r DESTROYS those newer
 // snapshots (and any clones/bookmarks of them). hold/release use a fixed tag.
@@ -664,7 +863,11 @@ func shellQuote(s string) string {
 }
 
 func sshPrefix(h Host) string {
-	return "ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=8 " + shellQuote(h.SSH)
+	s := "ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=8"
+	for _, o := range h.sshOpts() {
+		s += " " + shellQuote(o)
+	}
+	return s + " " + shellQuote(h.SSH)
 }
 
 // incrementalBase returns the newest source snapshot whose short name also

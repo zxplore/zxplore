@@ -90,11 +90,12 @@ func (p *xferPane) destination() string {
 	return p.location
 }
 
-func (p *xferPane) view(onConnect func()) fyne.CanvasObject {
-	buttons := container.NewHBox(widget.NewButton("Refresh", func() { p.reload() }))
-	if onConnect != nil {
-		buttons.Add(widget.NewButton("Connect…", onConnect))
-	}
+func (p *xferPane) view(onLocal, onConnect func()) fyne.CanvasObject {
+	buttons := container.NewHBox(
+		widget.NewButton("Local", onLocal),
+		widget.NewButton("Connect…", onConnect),
+		widget.NewButton("Refresh", func() { p.reload() }),
+	)
 	head := container.NewBorder(nil, nil, p.title, buttons)
 	return container.NewBorder(head, nil, nil, nil, p.list)
 }
@@ -105,33 +106,25 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 	right := newXferPane(switchTab) // TARGET
 	right.title.SetText("● (no target — click Connect…)")
 
-	setTarget := func(v string) {
-		v = strings.TrimSpace(v)
-		if v == "" {
-			right.host = LocalHost()
-			right.location = ""
-		} else {
-			f := ParseTarget(v)
-			right.host = f.Host()
-			right.location = f.Path
+	// Connect a pane to Local or a saved server (via the server manager). Both
+	// panes are connectable, so a remote→remote (FXP-style) replication works.
+	goLocal := func(p *xferPane) func() {
+		return func() {
+			p.host = LocalHost()
+			p.location = ""
+			p.sel = -1
+			p.reload()
 		}
-		right.sel = -1
-		right.reload()
 	}
-	connect := func() {
-		e := widget.NewEntry()
-		e.SetPlaceHolder("user@host:pool/path   (e.g. zexp@10.100.10.142:rpool/zexp-recv)")
-		dlg := dialog.NewForm("Connect target", "Connect", "Cancel",
-			[]*widget.FormItem{widget.NewFormItem("Target", e)},
-			func(ok bool) {
-				if ok {
-					setTarget(e.Text)
-				}
-			}, w)
-		e.OnSubmitted = func(string) { setTarget(e.Text); dlg.Hide() } // Enter connects
-		dlg.Resize(fyne.NewSize(560, 170))
-		dlg.Show()
-		w.Canvas().Focus(e)
+	connectVia := func(p *xferPane) func() {
+		return func() {
+			showServerManager(w, func(s Server) {
+				p.host = s.toHost()
+				p.location = s.Path
+				p.sel = -1
+				p.reload()
+			})
+		}
 	}
 
 	replicate := func(src, dst *xferPane) {
@@ -184,7 +177,10 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 	btnRL := widget.NewButton("←  Replicate", func() { replicate(right, left) })
 	bar := container.NewCenter(container.NewHBox(btnLR, widget.NewLabel("        "), btnRL))
 
-	split := container.NewHSplit(left.view(nil), right.view(connect))
+	split := container.NewHSplit(
+		left.view(goLocal(left), connectVia(left)),
+		right.view(goLocal(right), connectVia(right)),
+	)
 	split.SetOffset(0.5)
 	return container.NewBorder(nil, bar, nil, nil, split)
 }
