@@ -1,4 +1,4 @@
-# zexplore — design
+# zxplor — design
 
 A direct, keyboard-driven interface to ZFS primitives. **Not a dashboard:** every
 action is a plain `zfs`/`zpool` command you could have typed yourself. The point
@@ -6,10 +6,10 @@ is to make ZFS *ownership* tangible — you see every version of your data and m
 it with a keypress — without hiding or inventing anything.
 
 ## Surfaces (same primitives, different front doors)
-- **Console** (`zexplore`) — an fzf-driven browser: datasets/snapshots with a
+- **Console** (`zxplor`) — an fzf-driven browser: datasets/snapshots with a
   full properties + permissions dossier, snapshot on tap, point-and-shoot
-  replicate, file explore. Plus `zexplore mc` — a pinned-target commander.
-- **Transaction API** (`zexplore-api` + `zexplore-txn`) — a scoped
+  replicate, file explore. Plus `zxplor mc` — a pinned-target commander.
+- **Transaction API** (`zxplor-api` + `zxplor-txn`) — a scoped
   snapshot/rollback service so an app can bracket a risky operation with an
   instant undo: `begin → migrate → rollback|commit`. Per-caller scoping, audited.
 
@@ -23,7 +23,7 @@ manager (`systemd` unit on Linux, `rc.d` on FreeBSD).
 Incremental when the target already holds a common snapshot, else a full send;
 streamed through `mbuffer`/`pv`; received with `-F` into a target forced
 `readonly=on`, `canmount=noauto` so a replica never drifts out of its incremental
-chain. Local pool or a remote `host:pool` over SSH (your key/agent; zexplore
+chain. Local pool or a remote `host:pool` over SSH (your key/agent; zxplor
 never manages credentials).
 
 ## Transaction API — the hard constraint

@@ -234,15 +234,122 @@ func vdevErrors(status string) bool {
 //   - every snapshot (newest last)
 //
 // The UI pane is scrollable, so we show it all rather than a subset.
+// propVal is a parsed `zfs get` row: the value plus a source tag ([local], …).
+type propVal struct{ value, tag string }
+
+// propGroups turns `zfs get all`'s flat alphabetical dump into a story, ordered
+// the way an operator reasons about a dataset: what it IS, how much it stores,
+// how it's laid out/tuned, how it's encrypted, where it mounts/shares, how it
+// snapshots. Any property not named here still prints under OTHER / CUSTOM — so
+// the view stays complete (nothing hidden) while the groups make problems obvious.
+var propGroups = []struct {
+	title string
+	props []string
+}{
+	{"IDENTITY", []string{"type", "creation", "guid", "createtxg", "origin", "clones", "version"}},
+	{"CAPACITY & USAGE", []string{
+		"used", "available", "referenced",
+		"usedbydataset", "usedbysnapshots", "usedbychildren", "usedbyrefreservation",
+		"logicalused", "logicalreferenced",
+		"quota", "refquota", "reservation", "refreservation", "volsize",
+	}},
+	{"DATA LAYOUT & TUNING", []string{
+		"recordsize", "volblocksize", "compression", "compressratio", "refcompressratio",
+		"dedup", "checksum", "copies", "atime", "relatime",
+		"sync", "logbias", "primarycache", "secondarycache",
+		"redundant_metadata", "special_small_blocks",
+	}},
+	{"ENCRYPTION", []string{
+		"encryption", "encryptionroot", "keyformat", "keylocation", "keystatus", "pbkdf2iters",
+	}},
+	{"MOUNT & SHARING", []string{
+		"mounted", "mountpoint", "canmount", "readonly", "exec", "setuid", "devices",
+		"nbmand", "overlay", "sharenfs", "sharesmb",
+		"acltype", "aclmode", "aclinherit", "xattr",
+		"casesensitivity", "utf8only", "normalization",
+	}},
+	{"SNAPSHOTS & POLICY", []string{
+		"snapdir", "snapshot_limit", "snapshot_count", "defer_destroy", "userrefs",
+		"com.sun:auto-snapshot",
+	}},
+}
+
+// dblock is one titled "card" (a group's header + its property lines) that
+// packColumns lays out side by side.
+type dblock struct{ lines []string }
+
+// packColumns lays block cards into `cols` balanced columns (each block kept
+// intact), rendered side by side — turns a very long single-column property
+// dump into a compact grid, wrapping onto more rows as needed. Column-major
+// greedy: each block goes to the currently-shortest column so heights stay
+// even; a blank line separates stacked blocks. Rune-counted so the ━ headers
+// (multi-byte) still align in a monospace pane.
+func packColumns(blocks []dblock, cols int) string {
+	if cols < 1 {
+		cols = 1
+	}
+	colLines := make([][]string, cols)
+	for _, bl := range blocks {
+		min := 0
+		for c := 1; c < cols; c++ {
+			if len(colLines[c]) < len(colLines[min]) {
+				min = c
+			}
+		}
+		if len(colLines[min]) > 0 {
+			colLines[min] = append(colLines[min], "") // gap between cards
+		}
+		colLines[min] = append(colLines[min], bl.lines...)
+	}
+	widths := make([]int, cols)
+	maxRows := 0
+	for c := 0; c < cols; c++ {
+		for _, l := range colLines[c] {
+			if n := len([]rune(l)); n > widths[c] {
+				widths[c] = n
+			}
+		}
+		if len(colLines[c]) > maxRows {
+			maxRows = len(colLines[c])
+		}
+	}
+	const gutter = "   "
+	var b strings.Builder
+	for r := 0; r < maxRows; r++ {
+		for c := 0; c < cols; c++ {
+			var cell string
+			if r < len(colLines[c]) {
+				cell = colLines[c][r]
+			}
+			if c < cols-1 { // pad all but the last column, then gutter
+				if pad := widths[c] - len([]rune(cell)); pad > 0 {
+					cell += strings.Repeat(" ", pad)
+				}
+				cell += gutter
+			}
+			b.WriteString(cell)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 func Dossier(h Host, dataset string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s   [%s]\n\n", dataset, singleProp(h, dataset, "type"))
+	fmt.Fprintf(&b, "%s   [%s]\n", dataset, singleProp(h, dataset, "type"))
 
-	// ── every property, with source ──
-	b.WriteString("── properties  (name = value  [source]) ──\n")
-	out, err := run(h.command("zfs", "get", "-H", "-o", "property,value,source", "all", dataset))
-	if err != nil {
-		fmt.Fprintf(&b, "  (cannot read %s: %v)\n", dataset, err)
+	// ── HEALTH (full width): the operator's "is anything wrong?" answer ──
+	b.WriteString("\n━━━ HEALTH ━━━\n")
+	b.WriteString(healthSummary(h, dataset))
+
+	// (Snapshots are shown in the interactive list below the dossier — arrow +
+	// Enter or click to roll back / clone / hold — so they're not duplicated here.)
+
+	// ── parse every property once, keeping source tags and original order ──
+	props := map[string]propVal{}
+	var order []string
+	if out, err := run(h.command("zfs", "get", "-H", "-o", "property,value,source", "all", dataset)); err != nil {
+		fmt.Fprintf(&b, "\n  (cannot read properties of %s: %v)\n", dataset, err)
 	} else {
 		for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
 			f := strings.Split(line, "\t")
@@ -255,61 +362,238 @@ func Dossier(h Host, dataset string) string {
 				case f[2] == "" || f[2] == "-":
 					tag = "" // read-only / computed — no source
 				case strings.HasPrefix(f[2], "inherited from "):
-					tag = "   [inherited: " + strings.TrimPrefix(f[2], "inherited from ") + "]"
+					tag = " [inh:" + strings.TrimPrefix(f[2], "inherited from ") + "]"
 				default:
-					tag = "   [" + f[2] + "]" // default, local, received, temporary
+					tag = " [" + f[2] + "]" // default, local, received, temporary
 				}
 			}
-			fmt.Fprintf(&b, "  %-26s %s%s\n", f[0], f[1], tag)
+			props[f[0]] = propVal{value: f[1], tag: tag}
+			order = append(order, f[0])
 		}
 	}
 
-	// ── permissions: POSIX + ACL on the mountpoint, then ZFS delegations ──
-	b.WriteString("\n── permissions ──\n")
+	shown := map[string]bool{}
+	cell := func(name string) string {
+		p := props[name]
+		shown[name] = true
+		return fmt.Sprintf("  %-13s %s%s", name, p.value, p.tag)
+	}
+
+	// ── build one card per group, then pack them into 4 columns ──
+	var cards []dblock
+	for _, g := range propGroups {
+		var lines []string
+		for _, name := range g.props {
+			if _, ok := props[name]; ok && !shown[name] {
+				lines = append(lines, cell(name))
+			}
+		}
+		if len(lines) > 0 {
+			cards = append(cards, dblock{lines: append([]string{"━━ " + g.title + " ━━"}, lines...)})
+		}
+	}
+	var otherLines []string
+	for _, name := range order {
+		if !shown[name] {
+			otherLines = append(otherLines, cell(name))
+		}
+	}
+	if len(otherLines) > 0 {
+		cards = append(cards, dblock{lines: append([]string{"━━ OTHER / CUSTOM ━━"}, otherLines...)})
+	}
+	b.WriteString("\n")
+	b.WriteString(packColumns(cards, 4))
+
+	// ── PERMISSIONS (full width): POSIX + ACL on the mountpoint, then ZFS delegations ──
+	b.WriteString("\n━━━ PERMISSIONS ━━━\n")
 	mp := singleProp(h, dataset, "mountpoint")
 	if strings.HasPrefix(mp, "/") {
+		b.WriteString("  POSIX (mountpoint)\n")
 		if o, e := run(h.command("ls", "-ldh", mp)); e == nil {
-			fmt.Fprintf(&b, "  POSIX   %s\n", strings.TrimRight(o, "\n"))
+			fmt.Fprintf(&b, "    %s\n", strings.TrimRight(o, "\n"))
 		}
+		printedACL := false
 		if o, e := run(h.command("getfacl", "-p", mp)); e == nil {
 			for _, l := range strings.Split(strings.TrimRight(o, "\n"), "\n") {
 				if l != "" && !strings.HasPrefix(l, "#") {
-					fmt.Fprintf(&b, "  acl     %s\n", l)
+					if !printedACL {
+						b.WriteString("  ACL (getfacl)\n")
+						printedACL = true
+					}
+					fmt.Fprintf(&b, "    %s\n", l)
 				}
 			}
 		}
 	} else {
-		fmt.Fprintf(&b, "  POSIX   (mountpoint: %s)\n", mp)
+		fmt.Fprintf(&b, "  POSIX   (not mounted — mountpoint: %s)\n", mp)
 	}
 	if o, e := run(h.command("zfs", "allow", dataset)); e == nil && strings.TrimSpace(o) != "" {
-		b.WriteString("  zfs delegated:\n")
+		b.WriteString("  ZFS delegated (zfs allow)\n")
 		for _, l := range strings.Split(strings.TrimRight(o, "\n"), "\n") {
 			if strings.TrimSpace(l) != "" {
 				fmt.Fprintf(&b, "    %s\n", strings.TrimRight(l, " "))
 			}
 		}
 	} else {
-		b.WriteString("  zfs delegated   (none — root only)\n")
+		b.WriteString("  ZFS delegated   (none — root only)\n")
 	}
 
-	// ── snapshots ──
-	b.WriteString("\n── snapshots (newest last) ──\n")
-	snaps, err := ListSnapshots(h, dataset)
-	switch {
-	case err != nil:
-		fmt.Fprintf(&b, "  (error: %v)\n", err)
-	case len(snaps) == 0:
-		b.WriteString("  (none)\n")
-	default:
-		for _, sn := range snaps {
-			short := sn.Name
-			if i := strings.IndexByte(short, '@'); i >= 0 {
-				short = short[i+1:]
+	return b.String()
+}
+
+// ── property editing ────────────────────────────────────────────────────────
+
+// PropControl tells the GUI how to edit a property: a checkbox (bool), a dropdown
+// (enum, with its options), or a free-text field.
+type PropControl struct {
+	Kind    string // "bool" | "enum" | "text"
+	Options []string
+}
+
+// propControls maps common SETTABLE ZFS properties to an edit control. Anything
+// settable but unlisted falls back to a free-text field, so new/rare properties
+// are still editable — just without a curated option list.
+var propControls = map[string]PropControl{
+	"atime":                {"bool", []string{"on", "off"}},
+	"relatime":             {"bool", []string{"on", "off"}},
+	"readonly":             {"bool", []string{"on", "off"}},
+	"exec":                 {"bool", []string{"on", "off"}},
+	"setuid":               {"bool", []string{"on", "off"}},
+	"devices":              {"bool", []string{"on", "off"}},
+	"nbmand":               {"bool", []string{"on", "off"}},
+	"overlay":              {"bool", []string{"on", "off"}},
+	"vscan":                {"bool", []string{"on", "off"}},
+	"zoned":                {"bool", []string{"on", "off"}},
+	"compression":          {"enum", []string{"off", "on", "lz4", "zstd", "zstd-fast", "gzip", "gzip-1", "gzip-9", "lzjb", "zle"}},
+	"checksum":             {"enum", []string{"on", "off", "fletcher2", "fletcher4", "sha256", "sha512", "skein", "edonr", "blake3"}},
+	"dedup":                {"enum", []string{"off", "on", "sha256", "sha512", "skein", "edonr", "blake3", "verify"}},
+	"sync":                 {"enum", []string{"standard", "always", "disabled"}},
+	"logbias":              {"enum", []string{"latency", "throughput"}},
+	"primarycache":         {"enum", []string{"all", "none", "metadata"}},
+	"secondarycache":       {"enum", []string{"all", "none", "metadata"}},
+	"redundant_metadata":   {"enum", []string{"all", "most", "some", "none"}},
+	"snapdir":              {"enum", []string{"hidden", "visible"}},
+	"canmount":             {"enum", []string{"on", "off", "noauto"}},
+	"acltype":              {"enum", []string{"off", "nfsv4", "posix"}},
+	"aclmode":              {"enum", []string{"discard", "groupmask", "passthrough", "restricted"}},
+	"aclinherit":           {"enum", []string{"discard", "noallow", "restricted", "passthrough", "passthrough-x"}},
+	"xattr":                {"enum", []string{"on", "off", "sa", "dir"}},
+	"volmode":              {"enum", []string{"default", "full", "geom", "dev", "none"}},
+	"copies":               {"enum", []string{"1", "2", "3"}},
+	"recordsize":           {"text", nil},
+	"quota":                {"text", nil},
+	"refquota":             {"text", nil},
+	"reservation":          {"text", nil},
+	"refreservation":       {"text", nil},
+	"mountpoint":           {"text", nil},
+	"sharenfs":             {"text", nil},
+	"sharesmb":             {"text", nil},
+	"special_small_blocks": {"text", nil},
+}
+
+// Prop is a dataset property for the editor.
+type Prop struct {
+	Name, Value, Source string
+	Settable            bool // source != read-only ("-")
+	Control             PropControl
+}
+
+// DatasetProps returns every property of a dataset (structured) for the editor,
+// flagging which are user-settable and how to edit each.
+func DatasetProps(h Host, dataset string) ([]Prop, error) {
+	out, err := run(h.command("zfs", "get", "-H", "-o", "property,value,source", "all", dataset))
+	if err != nil {
+		return nil, err
+	}
+	var ps []Prop
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		f := strings.Split(line, "\t")
+		if len(f) < 3 {
+			continue
+		}
+		ctrl, ok := propControls[f[0]]
+		if !ok {
+			ctrl = PropControl{Kind: "text"}
+		}
+		ps = append(ps, Prop{
+			Name: f[0], Value: f[1], Source: f[2],
+			Settable: f[2] != "-" && f[2] != "", // read-only props report "-"
+			Control:  ctrl,
+		})
+	}
+	return ps, nil
+}
+
+// zfsAdmin runs a privileged `zfs <args>`: locally via pkexec (a polkit prompt),
+// remotely over ssh as the connected (delegated) user. Returns ZFS's own error
+// text on failure so the GUI can show exactly what was rejected.
+func zfsAdmin(h Host, args ...string) error {
+	var cmd *exec.Cmd
+	if h.SSH == "" {
+		cmd = exec.Command("pkexec", append([]string{"zfs"}, args...)...)
+	} else {
+		cmd = h.command("zfs", args...)
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("zfs %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// SetProp applies `zfs set prop=value dataset` (privileged; see zfsAdmin).
+func SetProp(h Host, dataset, prop, value string) error {
+	return zfsAdmin(h, "set", prop+"="+value, dataset)
+}
+
+// Snapshot actions (all privileged). Rollback uses -r so rolling back past newer
+// snapshots works — the GUI WARNS first, because -r DESTROYS those newer
+// snapshots (and any clones/bookmarks of them). hold/release use a fixed tag.
+func Rollback(h Host, snapshot string) error        { return zfsAdmin(h, "rollback", "-r", snapshot) }
+func Clone(h Host, snapshot, target string) error   { return zfsAdmin(h, "clone", snapshot, target) }
+func HoldSnap(h Host, snapshot string) error        { return zfsAdmin(h, "hold", "zxplor", snapshot) }
+func ReleaseSnap(h Host, snapshot string) error     { return zfsAdmin(h, "release", "zxplor", snapshot) }
+func DestroySnapshot(h Host, snapshot string) error { return zfsAdmin(h, "destroy", snapshot) }
+
+// PoolsOverview renders a compact machine overview: every imported pool with its
+// vitals (health, alloc/free/size, capacity, fragmentation, dedup) and a scrub +
+// errors line. Pinned at the top of the GUI so the whole box reads at a glance;
+// multiple pools stack. Best-effort — a failing zpool call degrades to a one-line
+// note rather than blanking the header.
+func PoolsOverview(h Host) string {
+	out, err := run(h.command("zpool", "list", "-H", "-o",
+		"name,health,size,alloc,free,capacity,fragmentation,dedupratio"))
+	if err != nil {
+		return "  (cannot list pools: " + err.Error() + ")"
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) == 0 || lines[0] == "" {
+		return "  (no pools imported)"
+	}
+	var b strings.Builder
+	for _, line := range lines {
+		f := strings.Split(line, "\t")
+		if len(f) < 8 {
+			continue
+		}
+		mark := "✓"
+		if f[1] != "ONLINE" {
+			mark = "⚠"
+		}
+		fmt.Fprintf(&b, "%s  %-16s %-9s  %6s used · %6s free of %-6s  ·  %4s cap · %3s frag · %s dedup\n",
+			mark, f[0], f[1], f[3], f[4], f[2], f[5], f[6], f[7])
+		if st, e := run(h.command("zpool", "status", f[0])); e == nil {
+			for _, sl := range strings.Split(st, "\n") {
+				t := strings.TrimSpace(sl)
+				switch {
+				case strings.HasPrefix(t, "scan:"):
+					fmt.Fprintf(&b, "     scan: %s\n", strings.TrimSpace(strings.TrimPrefix(t, "scan:")))
+				case strings.HasPrefix(t, "errors:"):
+					fmt.Fprintf(&b, "     %s\n", t)
+				}
 			}
-			fmt.Fprintf(&b, "  %-30s %8s  %s\n", short, sn.Used, sn.Creation)
 		}
 	}
-	return b.String()
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // ListPools lists pool names (the root datasets) at a host.
@@ -443,7 +727,7 @@ func SnapshotNow(h Host, dataset, name string) (string, error) {
 	return snap, err
 }
 
-// IsKldload reports whether we're on a kldload system, so zexplore can light up
+// IsKldload reports whether we're on a kldload system, so zxplor can light up
 // the extra primitives (boot environments, etc.). Universal ZFS otherwise.
 func IsKldload() bool {
 	for _, p := range []string{"/usr/local/bin/kbe", "/etc/kldload"} {

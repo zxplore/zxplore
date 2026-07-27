@@ -28,15 +28,15 @@ type xferPane struct {
 	host     Host
 	location string // "" = list all datasets; else list this path + descendants
 	datasets []Dataset
-	list     *widget.List
+	list     *navList
 	sel      int // effective selection (-1 = none)
 	title    *widget.Label
 }
 
-func newXferPane() *xferPane {
+func newXferPane(switchTab func(fyne.KeyName)) *xferPane {
 	p := &xferPane{sel: -1}
 	p.title = widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	p.list = widget.NewList(
+	p.list = newNavList(
 		func() int { return len(p.datasets) },
 		func() fyne.CanvasObject { return widget.NewLabel("t") },
 		func(i widget.ListItemID, o fyne.CanvasObject) {
@@ -44,10 +44,11 @@ func newXferPane() *xferPane {
 			o.(*widget.Label).SetText(fmt.Sprintf("%s   %s/%s  ×%d", d.Name, d.Used, d.Refer, d.Snaps))
 		},
 	)
-	// Track the effective selection from both mouse (OnSelected) and keyboard
-	// (OnHighlighted, ↑/↓ on a focused pane) so it drives the source/target.
+	p.list.onFunc = switchTab // F1/F2 switch tabs even when a pane is focused
+	// One selection: OnSelected records it; OnHighlighted (↑/↓ and hover)
+	// forwards into Select so the blue bar moves with the arrows too.
 	p.list.OnSelected = func(i widget.ListItemID) { p.sel = int(i) }
-	p.list.OnHighlighted = func(i widget.ListItemID) { p.sel = int(i) }
+	p.list.OnHighlighted = func(i widget.ListItemID) { p.list.Select(i) }
 	return p
 }
 
@@ -98,10 +99,10 @@ func (p *xferPane) view(onConnect func()) fyne.CanvasObject {
 	return container.NewBorder(head, nil, nil, nil, p.list)
 }
 
-func transferTab(w fyne.Window) fyne.CanvasObject {
-	left := newXferPane() // LOCAL source
+func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject {
+	left := newXferPane(switchTab) // LOCAL source
 	left.reload()
-	right := newXferPane() // TARGET
+	right := newXferPane(switchTab) // TARGET
 	right.title.SetText("● (no target — click Connect…)")
 
 	setTarget := func(v string) {

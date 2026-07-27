@@ -1,9 +1,9 @@
-// main.go — entry point for zexplore, the ZFS console.
+// main.go — entry point for zxplor, the ZFS console.
 //
 // Default: a native GUI (Fyne) — real window, keyboard + mouse, own icon.
 //
-//	zexplore            → GUI
-//	zexplore --tui      → the terminal UI (bubbletea), for headless / SSH / power use
+//	zxplor            → GUI
+//	zxplor --tui      → the terminal UI (bubbletea), for headless / SSH / power use
 //
 // Both share the zfs.go engine. It shells out to the portable zfs/zpool CLI, so
 // it runs on any ZFS system (Linux distros + FreeBSD); on a kldload host it
@@ -33,7 +33,7 @@ func main() {
 func runTUI() {
 	p := tea.NewProgram(newModel(), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "zexplore:", err)
+		fmt.Fprintln(os.Stderr, "zxplor:", err)
 		os.Exit(1)
 	}
 }

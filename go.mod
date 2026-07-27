@@ -1,4 +1,4 @@
-module zexplore
+module zxplor
 
 go 1.26.5
 

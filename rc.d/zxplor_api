@@ -1,0 +1,13 @@
+#!/bin/sh
+# FreeBSD rc.d script for the zxplor transaction API.
+# PROVIDE: zxplor_api
+# REQUIRE: zfs
+# KEYWORD: shutdown
+. /etc/rc.subr
+name="zxplor_api"
+rcvar="zxplor_api_enable"
+command="/usr/local/bin/zxplor-api"
+command_args="--unix /var/run/zxplor-api.sock &"
+load_rc_config $name
+: ${zxplor_api_enable:="NO"}
+run_rc_command "$1"
