@@ -10,6 +10,7 @@ package main
 import (
 	_ "embed"
 	"fmt"
+	"image/color"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -36,6 +37,30 @@ func (t compactTheme) Size(name fyne.ThemeSizeName) float32 {
 	return t.Theme.Size(name)
 }
 
+// Color follows GNOME's light/dark variant (delegated) but brands the accent
+// zexplore-teal and warms the dark background to a brand blue-grey so it reads
+// less flat/dreary than Fyne's default grey. Light mode keeps the system look.
+func (t compactTheme) Color(name fyne.ThemeColorName, v fyne.ThemeVariant) color.Color {
+	switch name {
+	case theme.ColorNamePrimary:
+		return color.NRGBA{R: 0x5f, G: 0xc4, B: 0xbc, A: 0xff}
+	case theme.ColorNameBackground:
+		if v == theme.VariantDark {
+			return color.NRGBA{R: 0x10, G: 0x17, B: 0x20, A: 0xff}
+		}
+	}
+	return t.Theme.Color(name, v)
+}
+
+// setDossierText renders s as one monospace segment using the theme foreground,
+// so the dossier follows GNOME's light/dark (a markdown code block would not).
+func setDossierText(r *widget.RichText, s string) {
+	r.Segments = []widget.RichTextSegment{
+		&widget.TextSegment{Text: s, Style: widget.RichTextStyle{TextStyle: fyne.TextStyle{Monospace: true}}},
+	}
+	r.Refresh()
+}
+
 func runGUI() {
 	a := app.NewWithID("ca.zexplore")
 	a.Settings().SetTheme(compactTheme{theme.DefaultTheme()})
@@ -58,9 +83,9 @@ func runGUI() {
 
 	setDossier := func(i int) {
 		if i >= 0 && i < len(datasets) {
-			dossier.ParseMarkdown("```\n" + Dossier(host, datasets[i].Name) + "\n```")
+			setDossierText(dossier, Dossier(host, datasets[i].Name))
 		} else {
-			dossier.ParseMarkdown("")
+			setDossierText(dossier, "")
 		}
 	}
 
@@ -124,9 +149,9 @@ func runGUI() {
 	})
 
 	if listErr != nil {
-		dossier.ParseMarkdown("```\ncannot list datasets:\n" + listErr.Error() +
-			"\n\n(zexplore needs permission to read ZFS — run it as root, or grant\n" +
-			" `zfs allow` on the pool.)\n```")
+		setDossierText(dossier, "cannot list datasets:\n"+listErr.Error()+
+			"\n\n(zexplore needs permission to read ZFS — run it as root, or grant\n"+
+			" `zfs allow` on the pool.)")
 	} else if len(datasets) > 0 {
 		list.Select(0)
 	}
