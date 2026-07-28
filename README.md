@@ -60,7 +60,7 @@ On most systems you *back up* your data. With ZFS, the filesystem already
 | | |
 |---|---|
 | <img src="docs/screenshots/snapshot-actions.png" alt="Snapshot actions"/> | **Snapshots as first-class objects.** Roll back (told exactly what gets destroyed), clone, browse its files, diff against live, hold, destroy. |
-| <img src="docs/screenshots/server-manager-dark.png" alt="Server manager, dark theme"/> | **Any ZFS box, from here.** Saved servers, key-first: a password authorizes your key *once*, then it's never stored. Jump hosts, custom ports, remote↔remote replication. |
+| <img src="docs/screenshots/server-manager-dark.png" alt="Server manager, dark theme"/> | **Any ZFS box, from here.** Saved servers, key-first: a password authorizes your key *once*, then it's never stored. Replication picks the cheapest correct stream — resume token, incremental from snapshot **or bookmark**, else full — and sends encrypted sources **raw** (`-w`): the offsite box never sees a key. |
 | <img src="docs/screenshots/boot-environments.png" alt="Boot environments"/> | **Boot environments** — derived from the pool's `bootfs`, never a hardcoded name: create restore points, roll back, delete. |
 | <img src="docs/screenshots/pools.png" alt="Pool manager"/> | **Pools** — scrub, trim, clear, import. Drill down for vdev topology with error counters, iostat, the file layout, and the two truths of free space: `zfs list` next to `df`. |
 
@@ -153,11 +153,12 @@ actions · `Esc` dismiss · `Alt+Q` quit.
 
 ## Security model
 
-- Runs **unprivileged**; elevates per command — `pkexec` locally, the connected
-  (ideally [delegated](https://openzfs.github.io/openzfs-docs/man/master/8/zfs-allow.8.html))
-  user remotely. `zfs allow send,snapshot,hold,diff,mount user pool/ds` is all
-  a remote needs for the read/replicate paths.
-- **Key-first SSH.** A password is used at most once (to authorize a key) and
+- Runs **unprivileged, tries unprivileged first** — root and
+  [`zfs allow`-delegated](https://openzfs.github.io/openzfs-docs/man/master/8/zfs-allow.8.html)
+  users never see a prompt; only a real permission failure retries via
+  `pkexec` (with a polkit policy so one auth covers minutes, not one command).
+- **Key-first SSH, pure Go.** A password is used at most once — to authorize a
+  key over an in-process SSH dial (no `sshpass`, nothing on any argv) — and
   never stored. `~/.config/zxplore/servers.json` holds key *paths* only.
 - **Passphrases on stdin** — encryption keys never appear in `ps` or logs.
 - **Audit log** — every executed mutating command is appended to

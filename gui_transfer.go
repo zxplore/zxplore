@@ -162,7 +162,7 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 		dstPath := d + "/" + leaf
 		pipeline := ReplicatePipeline(src.host, snap, dst.host, dstPath)
 		dialog.ShowConfirm("Replicate",
-			fmt.Sprintf("Send\n  %s\nto\n  %s:%s\n\n(runs as root via pkexec)", snap, dst.host.Label(), dstPath),
+			fmt.Sprintf("Send\n  %s\nto\n  %s:%s\n\nRuns exactly (root):\n  %s", snap, dst.host.Label(), dstPath, pipeline),
 			func(ok bool) {
 				if !ok {
 					return

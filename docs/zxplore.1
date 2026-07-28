@@ -137,10 +137,34 @@ Replication streams
 .Ql zfs send
 into
 .Ql zfs recv
-for any local/remote combination \(em including remote\(->remote \(em
-incremental when the two ends share a snapshot, into a target received
-readonly and non-automounting so it can never drift out of the incremental
-chain.
+for any local/remote combination \(em including remote\(->remote \(em into a
+target received readonly and non-automounting so it can never drift out of
+the incremental chain.
+The pipeline picks the cheapest correct stream automatically:
+.Bl -bullet -offset indent -compact
+.It
+a RESUME
+.Pq Ql send -t <token>
+when the target holds a partial receive from an interrupted run \(em
+receives run with
+.Fl s ,
+so interruptions leave a
+.Ql receive_resume_token
+instead of wasted work;
+.It
+an INCREMENTAL when the ends share a snapshot \(em or, if every common
+snapshot was pruned on the source, a matching BOOKMARK
+.Pq Ql send -i ds#bm ;
+.It
+a FULL send otherwise.
+.El
+.Pp
+An encrypted source is sent RAW
+.Pq Fl w :
+blocks travel still-encrypted and the key never loads on the target \(em
+the offsite box cannot read the data it stores.
+Bookmark a snapshot from the snapshot menu to keep an incremental base that
+costs no space, then prune the snapshot itself.
 .Sh KEY SETUP
 The intended flow is key-first: a password crosses the wire exactly once,
 to install the key, and is never stored.
@@ -286,9 +310,17 @@ target host, and exact argv, so the fleet's change history is one
 away.
 .Sh PRIVILEGES
 .Nm
-runs unprivileged and elevates per command: locally through
-.Xr pkexec 1 ,
-remotely as the connected (ideally delegated) user.
+runs unprivileged and elevates UNPRIVILEGED-FIRST: every command is tried as
+the operator, and only a permission failure retries under
+.Xr pkexec 1
+\(em so root and
+.Xr zfs-allow 8 Ns -delegated
+users never see a prompt at all.
+Remotely, commands always run as the connected (ideally delegated) user.
+The installed polkit policy
+.Pq Pa org.zxplore.policy
+lets one admin authentication cover a few minutes of commands instead of
+prompting per action.
 Encryption passphrases travel on standard input, never on a command line.
 On the remote side, grant a delegated user the needed permissions with
 .Xr zfs-allow 8

@@ -552,21 +552,46 @@ func DatasetProps(h Host, dataset string) ([]Prop, error) {
 	return ps, nil
 }
 
-// zfsAdmin runs a privileged `zfs <args>`: locally via pkexec (a polkit prompt),
-// remotely over ssh as the connected (delegated) user. Returns ZFS's own error
-// text on failure so the GUI can show exactly what was rejected.
-func zfsAdmin(h Host, args ...string) error {
-	auditLog(h, append([]string{"zfs"}, args...))
-	var cmd *exec.Cmd
-	if h.SSH == "" {
-		cmd = exec.Command("pkexec", append([]string{"zfs"}, args...)...)
-	} else {
-		cmd = h.command("zfs", args...)
+// needsElevation reports whether a failed command's output is a PERMISSION
+// problem (worth retrying elevated) rather than a real error (which isn't).
+func needsElevation(out string) bool {
+	s := strings.ToLower(out)
+	return strings.Contains(s, "permission denied") ||
+		strings.Contains(s, "insufficient privileges") ||
+		strings.Contains(s, "must be root") ||
+		strings.Contains(s, "not privileged")
+}
+
+// runMaybeElevated runs argv locally: UNPRIVILEGED FIRST — if the operator is
+// root or holds `zfs allow` delegation, no polkit prompt ever appears — then
+// retries under pkexec only when the failure was a permission problem.
+// Remote commands always run as the connected (delegated) user.
+func runMaybeElevated(h Host, argv ...string) error {
+	auditLog(h, argv)
+	if h.SSH != "" {
+		if out, err := h.command(argv[0], argv[1:]...).CombinedOutput(); err != nil {
+			return fmt.Errorf("%s: %v: %s", strings.Join(argv, " "), err, strings.TrimSpace(string(out)))
+		}
+		return nil
 	}
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("zfs %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	if !needsElevation(string(out)) {
+		return fmt.Errorf("%s: %v: %s", strings.Join(argv, " "), err, strings.TrimSpace(string(out)))
+	}
+	if out2, err2 := exec.Command("pkexec", argv...).CombinedOutput(); err2 != nil {
+		return fmt.Errorf("%s (elevated): %v: %s", strings.Join(argv, " "), err2, strings.TrimSpace(string(out2)))
 	}
 	return nil
+}
+
+// zfsAdmin runs a privileged `zfs <args>` — unprivileged first, pkexec only on
+// a permission failure (see runMaybeElevated). Returns ZFS's own error text so
+// the GUI can show exactly what was rejected.
+func zfsAdmin(h Host, args ...string) error {
+	return runMaybeElevated(h, append([]string{"zfs"}, args...)...)
 }
 
 // SetProp applies `zfs set prop=value dataset` (privileged; see zfsAdmin).
@@ -576,20 +601,32 @@ func SetProp(h Host, dataset, prop, value string) error {
 
 // zfsAdminStdin is zfsAdmin with data fed on stdin — for ops that read a
 // passphrase (load-key / change-key / create with keyformat=passphrase). The
-// passphrase never touches the command line or disk.
+// passphrase never touches the command line or disk. Same unprivileged-first
+// policy; the elevated retry re-feeds stdin (the first attempt consumed
+// nothing if it died on permissions).
 func zfsAdminStdin(h Host, stdin string, args ...string) error {
 	auditLog(h, append([]string{"zfs"}, args...)) // argv only — stdin (passphrase) never logged
-	var cmd *exec.Cmd
-	if h.SSH == "" {
-		cmd = exec.Command("pkexec", append([]string{"zfs"}, args...)...)
-	} else {
-		cmd = h.command("zfs", args...)
+	attempt := func(argv ...string) (string, error) {
+		cmd := exec.Command(argv[0], argv[1:]...)
+		if h.SSH != "" {
+			cmd = h.command(argv[0], argv[1:]...)
+		}
+		cmd.Stdin = strings.NewReader(stdin)
+		out, err := cmd.CombinedOutput()
+		return string(out), err
 	}
-	cmd.Stdin = strings.NewReader(stdin)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("zfs %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	argv := append([]string{"zfs"}, args...)
+	out, err := attempt(argv...)
+	if err == nil {
+		return nil
 	}
-	return nil
+	if h.SSH == "" && needsElevation(out) {
+		if out2, err2 := attempt(append([]string{"pkexec"}, argv...)...); err2 != nil {
+			return fmt.Errorf("zfs %s (elevated): %v: %s", strings.Join(args, " "), err2, strings.TrimSpace(out2))
+		}
+		return nil
+	}
+	return fmt.Errorf("zfs %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(out))
 }
 
 // ── encryption ───────────────────────────────────────────────────────────────
@@ -611,19 +648,10 @@ func CreateEncrypted(h Host, name, passphrase string) error {
 
 // ── pool operations ──────────────────────────────────────────────────────────
 
-// zpoolAdmin runs a privileged `zpool <args>` (pkexec local / ssh remote).
+// zpoolAdmin runs a privileged `zpool <args>` — unprivileged first, pkexec
+// only on a permission failure (local); ssh as the connected user (remote).
 func zpoolAdmin(h Host, args ...string) error {
-	auditLog(h, append([]string{"zpool"}, args...))
-	var cmd *exec.Cmd
-	if h.SSH == "" {
-		cmd = exec.Command("pkexec", append([]string{"zpool"}, args...)...)
-	} else {
-		cmd = h.command("zpool", args...)
-	}
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("zpool %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return runMaybeElevated(h, append([]string{"zpool"}, args...)...)
 }
 
 // ScrubPool starts (or with start=false, stops) a scrub. TrimPool trims free
@@ -640,21 +668,9 @@ func PoolStatusText(h Host, pool string) (string, error) {
 	return run(h.command("zpool", "status", pool))
 }
 
-// adminExec runs an arbitrary privileged command (not just zfs) — pkexec locally,
-// ssh (delegated) remotely. Used for host tools like kldload's `kbe`.
-func adminExec(h Host, argv ...string) error {
-	auditLog(h, argv)
-	var cmd *exec.Cmd
-	if h.SSH == "" {
-		cmd = exec.Command("pkexec", argv...)
-	} else {
-		cmd = h.command(argv[0], argv[1:]...)
-	}
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s: %v: %s", strings.Join(argv, " "), err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
+// adminExec runs an arbitrary privileged command (not just zfs) — same
+// unprivileged-first policy. Used for restores and host tools like `kbe`.
+func adminExec(h Host, argv ...string) error { return runMaybeElevated(h, argv...) }
 
 // DestroyDataset destroys a dataset recursively. The caller MUST confirm first.
 func DestroyDataset(h Host, dataset string) error { return zfsAdmin(h, "destroy", "-r", dataset) }
@@ -885,7 +901,87 @@ func PoolDossier(h Host, pool string) string {
 			b.WriteString("  " + l + "\n")
 		}
 	}
+
+	b.WriteString("\n━━━ ARC (host-wide) ━━━\n")
+	if arc := arcSummary(h); arc != "" {
+		b.WriteString(arc)
+	} else {
+		b.WriteString("  (ARC stats not readable on this host)\n")
+	}
+
+	b.WriteString("\n━━━ RECENT EVENTS ━━━\n")
+	if ev, err := run(h.command("zpool", "events", "-H")); err == nil {
+		lines := strings.Split(strings.TrimRight(ev, "\n"), "\n")
+		if len(lines) > 12 {
+			lines = lines[len(lines)-12:]
+		}
+		for _, l := range lines {
+			b.WriteString("  " + l + "\n")
+		}
+	} else {
+		b.WriteString("  (zpool events needs root — zxplore's own actions are in the audit log)\n")
+	}
 	return b.String()
+}
+
+// arcSummary reads host-wide ARC stats: /proc/spl/kstat/zfs/arcstats on
+// Linux, kstat sysctls on FreeBSD. "" when neither is readable.
+func arcSummary(h Host) string {
+	stats := map[string]int64{}
+	if out, err := run(h.command("cat", "/proc/spl/kstat/zfs/arcstats")); err == nil {
+		for _, l := range strings.Split(out, "\n") {
+			f := strings.Fields(l) // name type data
+			if len(f) == 3 {
+				if v, e := strconv.ParseInt(f[2], 10, 64); e == nil {
+					stats[f[0]] = v
+				}
+			}
+		}
+	} else {
+		// FreeBSD: same counters, exposed as sysctls
+		for _, k := range []string{"size", "c_max", "hits", "misses", "mru_size", "mfu_size", "l2_size", "l2_hits", "l2_misses"} {
+			if out, err := run(h.command("sysctl", "-n", "kstat.zfs.misc.arcstats."+k)); err == nil {
+				if v, e := strconv.ParseInt(strings.TrimSpace(out), 10, 64); e == nil {
+					stats[k] = v
+				}
+			}
+		}
+	}
+	if stats["size"] == 0 && stats["c_max"] == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "  size %s of %s max", humanBytes(stats["size"]), humanBytes(stats["c_max"]))
+	if hm := stats["hits"] + stats["misses"]; hm > 0 {
+		fmt.Fprintf(&b, "   ·   hit rate %.2f%% (%s hits / %s misses)",
+			100*float64(stats["hits"])/float64(hm), humanCount(stats["hits"]), humanCount(stats["misses"]))
+	}
+	b.WriteString("\n")
+	fmt.Fprintf(&b, "  MRU %s · MFU %s", humanBytes(stats["mru_size"]), humanBytes(stats["mfu_size"]))
+	if stats["l2_size"] > 0 {
+		fmt.Fprintf(&b, "   ·   L2ARC %s", humanBytes(stats["l2_size"]))
+		if l2 := stats["l2_hits"] + stats["l2_misses"]; l2 > 0 {
+			fmt.Fprintf(&b, " (hit rate %.1f%%)", 100*float64(stats["l2_hits"])/float64(l2))
+		}
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// humanCount renders a plain count like 75073947298 as "75.1G" (decimal-ish,
+// for hit counters — not byte-exact, just readable).
+func humanCount(n int64) string {
+	v := float64(n)
+	for _, u := range []string{"", "K", "M", "G", "T"} {
+		if v < 1000 {
+			if u == "" {
+				return fmt.Sprintf("%d", n)
+			}
+			return fmt.Sprintf("%.1f%s", v, u)
+		}
+		v /= 1000
+	}
+	return fmt.Sprintf("%.1fP", v)
 }
 
 // ListPools lists pool names (the root datasets) at a host.
@@ -986,30 +1082,92 @@ func incrementalBase(srcHost Host, srcDs string, dstHost Host, dstPath string) s
 			base = srcDs + "@" + s.Name[i+1:]
 		}
 	}
+	// Every common snapshot pruned on the source? A BOOKMARK with a matching
+	// name still works as the incremental origin — that's what they're for.
+	if base == "" {
+		if bms, err := ListBookmarks(srcHost, srcDs); err == nil {
+			for _, b := range bms {
+				if i := strings.IndexByte(b.Name, '#'); i >= 0 && have[b.Name[i+1:]] {
+					base = srcDs + "#" + b.Name[i+1:]
+				}
+			}
+		}
+	}
 	return base
 }
 
+// Bookmark is one zfs bookmark row (ds#name) — an incremental send base that
+// costs no space and never blocks a snapshot destroy.
+type Bookmark struct {
+	Name     string
+	Creation string
+}
+
+// ListBookmarks lists a dataset's bookmarks, oldest first.
+func ListBookmarks(h Host, dataset string) ([]Bookmark, error) {
+	out, err := run(h.command("zfs", "list", "-H", "-t", "bookmark",
+		"-o", "name,creation", "-s", "creation", "-r", "-d", "1", dataset))
+	if err != nil {
+		return nil, err
+	}
+	var rows []Bookmark
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		f := strings.Split(line, "\t")
+		if len(f) >= 2 && f[0] != "" {
+			rows = append(rows, Bookmark{Name: f[0], Creation: f[1]})
+		}
+	}
+	return rows, nil
+}
+
+// CreateBookmark bookmarks a snapshot (ds@snap → ds#name) so the snapshot can
+// be pruned without losing the incremental chain. DestroyBookmark removes one.
+func CreateBookmark(h Host, snapshot, name string) error {
+	i := strings.IndexByte(snapshot, '@')
+	if i < 0 {
+		return fmt.Errorf("%s is not a snapshot", snapshot)
+	}
+	return zfsAdmin(h, "bookmark", snapshot, snapshot[:i]+"#"+name)
+}
+func DestroyBookmark(h Host, bookmark string) error { return zfsAdmin(h, "destroy", bookmark) }
+
 // ReplicatePipeline builds the `sh -c` command that sends srcSnap to
-// dstHost:dstPath — incremental when a common snapshot exists, else full. The
-// target is received readonly + non-automounting so it can't drift out of the
-// incremental chain. Works for any local/remote combination.
+// dstHost:dstPath. In order of preference:
+//   - a RESUME (`send -t <token>`) when the destination holds a partial
+//     receive from an interrupted earlier run (recv runs with -s, so
+//     interruptions leave a receive_resume_token instead of wasted work);
+//   - an INCREMENTAL when the two ends share a snapshot — or, if every common
+//     snapshot was pruned on the source, a matching BOOKMARK (send -i ds#bm);
+//   - a FULL send otherwise.
+//
+// An encrypted source is sent RAW (-w): blocks travel still-encrypted, keys
+// never load on the wire or the target — the offsite box can't read the data.
+// The target is received readonly + non-automounting so it can't drift out of
+// the incremental chain. Works for any local/remote combination.
 func ReplicatePipeline(srcHost Host, srcSnap string, dstHost Host, dstPath string) string {
 	srcDs := srcSnap
 	if i := strings.IndexByte(srcSnap, '@'); i >= 0 {
 		srcDs = srcSnap[:i]
 	}
-	base := incrementalBase(srcHost, srcDs, dstHost, dstPath)
 
-	send := "zfs send -v "
-	if base != "" {
-		send += "-i " + shellQuote(base) + " "
+	var send string
+	if tok := singleProp(dstHost, dstPath, "receive_resume_token"); tok != "" && tok != "-" && tok != "?" {
+		send = "zfs send -v -t " + shellQuote(tok)
+	} else {
+		send = "zfs send -v "
+		if enc := singleProp(srcHost, srcDs, "encryption"); enc != "" && enc != "off" && enc != "?" {
+			send += "-w " // raw: replicate without ever loading the key
+		}
+		if base := incrementalBase(srcHost, srcDs, dstHost, dstPath); base != "" {
+			send += "-i " + shellQuote(base) + " "
+		}
+		send += shellQuote(srcSnap)
 	}
-	send += shellQuote(srcSnap)
 	if srcHost.SSH != "" {
 		send = sshPrefix(srcHost) + " " + shellQuote(send)
 	}
 
-	recv := "zfs recv -F -o readonly=on -o canmount=noauto " + shellQuote(dstPath)
+	recv := "zfs recv -s -F -o readonly=on -o canmount=noauto " + shellQuote(dstPath)
 	if dstHost.SSH != "" {
 		recv = sshPrefix(dstHost) + " " + shellQuote(recv)
 	}

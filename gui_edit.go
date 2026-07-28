@@ -79,6 +79,19 @@ func snapshotActionDialog(host Host, snap string, w fyne.Window, onDone func()) 
 		{"What changed since this snapshot — zfs diff…", func() {
 			showDiffDialog(host, ds, w, short)
 		}},
+		{"Bookmark (keeps the incremental chain)…", func() {
+			e := widget.NewEntry()
+			e.SetText(short)
+			dialog.ShowForm("Bookmark "+short, "Bookmark", "Cancel",
+				[]*widget.FormItem{widget.NewFormItem("Name (→ "+ds+"#…)", e)},
+				func(ok bool) {
+					if ok && strings.TrimSpace(e.Text) != "" {
+						run("bookmarked", func() error {
+							return CreateBookmark(host, snap, strings.TrimSpace(e.Text))
+						})
+					}
+				}, w)
+		}},
 		{"Hold (prevent destroy)", func() {
 			run("held", func() error { return HoldSnap(host, snap) })
 		}},

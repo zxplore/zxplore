@@ -69,6 +69,38 @@ func datasetContextMenu(h Host, dataset string, w fyne.Window, refresh, onEdit f
 	diffItem := fyne.NewMenuItem("What changed — zfs diff…", func() {
 		showDiffDialog(h, dataset, w, "")
 	})
+	bookmarks := fyne.NewMenuItem("Bookmarks…", func() {
+		go func() {
+			bms, err := ListBookmarks(h, dataset)
+			fyne.Do(func() {
+				if err != nil {
+					dialog.ShowError(err, w)
+					return
+				}
+				if len(bms) == 0 {
+					dialog.ShowInformation("Bookmarks",
+						"No bookmarks on "+dataset+" yet.\n\nBookmark a snapshot (snapshot menu) to keep an\nincremental base that costs no space — then the\nsnapshot itself can be pruned.", w)
+					return
+				}
+				var acts []menuAction
+				for _, b := range bms {
+					b := b
+					short := b.Name
+					if i := strings.IndexByte(short, '#'); i >= 0 {
+						short = short[i:]
+					}
+					acts = append(acts, menuAction{short + "   (" + b.Creation + ")  — destroy…", func() {
+						dialog.ShowConfirm("Destroy bookmark", "Destroy "+b.Name+" ?\n\n(If it is the last common base with a replica,\nthe next send becomes a FULL send.)", func(ok bool) {
+							if ok {
+								runOp("destroy bookmark", func() error { return DestroyBookmark(h, b.Name) })
+							}
+						}, w)
+					}})
+				}
+				showActionMenu("Bookmarks — "+dataset, acts, w)
+			})
+		}()
+	})
 	snapNow := fyne.NewMenuItem("Snapshot now…", func() {
 		promptName("Snapshot "+dataset, "Name", "snap-"+time.Now().Format("20060102-150405"), func(n string) {
 			runOp("snapshot", func() error { _, e := SnapshotNow(h, dataset, n); return e })
@@ -208,7 +240,7 @@ func datasetContextMenu(h Host, dataset string, w fyne.Window, refresh, onEdit f
 	return fyne.NewMenu("",
 		newChild, newVol, renameItem, mountItem, unmountItem, enc,
 		fyne.NewMenuItemSeparator(),
-		snapNow, explore, diffItem, clone, replicate, be,
+		snapNow, explore, diffItem, bookmarks, clone, replicate, be,
 		fyne.NewMenuItemSeparator(), rollback, edit,
 		fyne.NewMenuItemSeparator(), destroy)
 }

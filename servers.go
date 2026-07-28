@@ -12,11 +12,15 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
+
+	"golang.org/x/crypto/ssh"
 )
 
 // Server is one saved connection.
@@ -179,8 +183,11 @@ func PublicKey(keyPath string) (string, error) {
 }
 
 // AuthorizeKey appends the server's public key to the remote's authorized_keys
-// using a ONE-TIME password (via sshpass). The password is used only for this
-// call and never stored. After this, key auth works and no password is needed.
+// using a ONE-TIME password. Pure Go (golang.org/x/crypto/ssh) — no sshpass,
+// no password on any process's argv or environment, used only for this dial
+// and never stored. After this, key auth works and no password is needed.
+// (Host-key checking is intentionally lax for this FIRST contact — the same
+// trust-on-first-use moment as ssh-copy-id to a new machine.)
 func AuthorizeKey(s Server, password string) error {
 	pub, err := PublicKey(s.KeyPath)
 	if err != nil {
@@ -190,12 +197,31 @@ func AuthorizeKey(s Server, password string) error {
 	if port == 0 {
 		port = 22
 	}
-	remote := "umask 077; mkdir -p ~/.ssh && printf '%s\\n' " + shellQuote(pub) +
-		" >> ~/.ssh/authorized_keys && sort -u ~/.ssh/authorized_keys -o ~/.ssh/authorized_keys"
-	cmd := exec.Command("sshpass", "-p", password,
-		"ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=8",
-		"-p", strconv.Itoa(port), s.sshTarget(), remote)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	user := s.User
+	if user == "" {
+		user = os.Getenv("USER")
+	}
+	cfg := &ssh.ClientConfig{
+		User:            user,
+		Auth:            []ssh.AuthMethod{ssh.Password(password)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TOFU: first contact installs the key
+		Timeout:         10 * time.Second,
+	}
+	client, err := ssh.Dial("tcp", net.JoinHostPort(s.Host, strconv.Itoa(port)), cfg)
+	if err != nil {
+		return fmt.Errorf("authorize key on %s: %v", s.sshTarget(), err)
+	}
+	defer client.Close()
+	sess, err := client.NewSession()
+	if err != nil {
+		return fmt.Errorf("authorize key on %s: %v", s.sshTarget(), err)
+	}
+	defer sess.Close()
+	sess.Stdin = strings.NewReader(pub + "\n")
+	// append via stdin so the key material never hits a shell-quoted argv
+	out, err := sess.CombinedOutput(
+		"umask 077; mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys && sort -u ~/.ssh/authorized_keys -o ~/.ssh/authorized_keys")
+	if err != nil {
 		return fmt.Errorf("authorize key on %s: %v: %s", s.sshTarget(), err, strings.TrimSpace(string(out)))
 	}
 	return nil

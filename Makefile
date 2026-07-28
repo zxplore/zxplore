@@ -61,6 +61,10 @@ install: build
 	install -m 0644 assets/zxplore-tui.svg       $(ICONDIR)/zxplore-tui.svg
 	install -m 0644 contrib/zxplore.desktop      $(APPDIR)/zxplore.desktop
 	install -m 0644 contrib/zxplore-tui.desktop  $(APPDIR)/zxplore-tui.desktop
+	# polkit: one admin auth covers a few minutes of zfs/zpool (Linux desktops)
+	@if [ -d $(DESTDIR)/usr/share/polkit-1/actions ]; then \
+	  install -m 0644 contrib/org.zxplore.policy $(DESTDIR)/usr/share/polkit-1/actions/; \
+	fi
 	install -m 0644 README.md docs/DESIGN.md $(DOCDIR)
 	# Optional host-side transaction API (Python) + guest CLI, when present.
 	@if [ -f bin/zxplore-api ]; then \
@@ -78,6 +82,7 @@ uninstall:
 	rm -f $(APPDIR)/zxplore.desktop $(APPDIR)/zxplore-tui.desktop
 	rm -f $(ICONDIR)/zxplore.svg $(ICONDIR)/zxplore-tui.svg
 	rm -f $(MANDIR)/zxplore.1
+	rm -f $(DESTDIR)/usr/share/polkit-1/actions/org.zxplore.policy
 	rm -f $(UNITDIR)/zxplore-api.service
 	rm -rf $(DOCDIR)
 

@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+<!-- zxplore polkit policy: let one admin authentication cover a few minutes
+     of zfs/zpool commands (auth_admin_keep) instead of prompting per command.
+     zxplore itself elevates unprivileged-first: root and zfs-allow-delegated
+     users never see a prompt at all. Actions cover the two common install
+     paths for the ZFS utilities (Fedora/RHEL: /usr/bin; Debian: /usr/sbin). -->
+<policyconfig>
+  <vendor>zxplore</vendor>
+  <vendor_url>https://zxplore.dev</vendor_url>
+
+  <action id="org.zxplore.zfs">
+    <description>Run zfs as administrator (zxplore)</description>
+    <message>zxplore needs administrator rights to change ZFS state</message>
+    <defaults>
+      <allow_any>auth_admin_keep</allow_any>
+      <allow_inactive>auth_admin_keep</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/zfs</annotate>
+  </action>
+
+  <action id="org.zxplore.zpool">
+    <description>Run zpool as administrator (zxplore)</description>
+    <message>zxplore needs administrator rights to manage pools</message>
+    <defaults>
+      <allow_any>auth_admin_keep</allow_any>
+      <allow_inactive>auth_admin_keep</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/zpool</annotate>
+  </action>
+
+  <action id="org.zxplore.zfs.sbin">
+    <description>Run zfs as administrator (zxplore)</description>
+    <message>zxplore needs administrator rights to change ZFS state</message>
+    <defaults>
+      <allow_any>auth_admin_keep</allow_any>
+      <allow_inactive>auth_admin_keep</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/sbin/zfs</annotate>
+  </action>
+
+  <action id="org.zxplore.zpool.sbin">
+    <description>Run zpool as administrator (zxplore)</description>
+    <message>zxplore needs administrator rights to manage pools</message>
+    <defaults>
+      <allow_any>auth_admin_keep</allow_any>
+      <allow_inactive>auth_admin_keep</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/sbin/zpool</annotate>
+  </action>
+</policyconfig>
