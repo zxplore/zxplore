@@ -13,7 +13,7 @@
 ![Built with Go](https://img.shields.io/badge/built%20with-Go-00ADD8.svg)
 ![OpenZFS](https://img.shields.io/badge/filesystem-OpenZFS-orange.svg)
 
-<img src="docs/screenshots/browser-light.png" width="920" alt="zxplore browser — pools overview, dataset list, full property dossier, snapshot timeline"/>
+<img src="docs/screenshots/browser-full-dark.png" width="880" alt="zxplore full screen — three pools, dozens of datasets, full property dossier with sources, snapshot timeline"/>
 
 </div>
 
@@ -73,7 +73,8 @@ dark theme, and a guidance screen — not a blank window — on a host with no
 pools, or no ZFS at all.
 
 <div align="center">
-<img src="docs/screenshots/splash-dark.png" width="640" alt="zxplore splash, dark theme"/>
+<img src="docs/screenshots/splash-dark.png" width="46%" alt="zxplore splash, dark theme"/> <img src="docs/screenshots/browser-light.png" width="46%" alt="zxplore in light theme"/>
+<br/><sub>Instant splash while the first scan runs · and a light theme, if your desktop swings that way.</sub>
 </div>
 
 ## Install
