@@ -60,6 +60,7 @@ type model struct {
 	cmdr      commander
 	// connectPane: -1 = connect the browser itself; 0/1 = connect a commander pane.
 	connectPane int
+	dossCols    int // dossier column count, derived from the pane width
 }
 
 func newModel() model {
@@ -67,9 +68,35 @@ func newModel() model {
 	ti.Placeholder = "user@host:pool/path   (blank host = local)"
 	ti.CharLimit = 256
 	ti.Width = 48
-	m := model{host: LocalHost(), kldload: IsKldload(), input: ti, connectPane: -1}
+	m := model{host: LocalHost(), kldload: IsKldload(), input: ti, connectPane: -1, dossCols: 1}
 	m.reload()
 	return m
+}
+
+// dossierPaneWidth mirrors viewBrowse's split so the dossier is packed for the
+// width it will actually render in.
+func (m model) dossierPaneWidth() int {
+	leftW := m.width * 45 / 100
+	if leftW < 24 {
+		leftW = 24
+	}
+	rightW := m.width - leftW - 4
+	if rightW < 12 {
+		rightW = 12
+	}
+	return rightW - 2 // inside the border
+}
+
+// dossierColsFor picks how many property columns fit (~46 chars each).
+func (m model) dossierColsFor() int {
+	c := m.dossierPaneWidth() / 46
+	if c < 1 {
+		c = 1
+	}
+	if c > 4 {
+		c = 4
+	}
+	return c
 }
 
 // applyConnect applies a chosen favorite/target: to a commander pane if we
@@ -134,7 +161,7 @@ func (m *model) reload() {
 
 func (m *model) refreshDossier() {
 	if m.cursor >= 0 && m.cursor < len(m.datasets) {
-		m.dossier = Dossier(m.host, m.datasets[m.cursor].Name)
+		m.dossier = DossierCols(m.host, m.datasets[m.cursor].Name, m.dossCols)
 	} else if m.err == "" {
 		// empty but no error — say WHY (no ZFS? no pools?) and the way out,
 		// instead of a blank pane.
@@ -187,6 +214,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		// repack the dossier only when the fitting column count changes —
+		// refreshing it costs real zfs calls.
+		if c := m.dossierColsFor(); c != m.dossCols {
+			m.dossCols = c
+			m.refreshDossier()
+		}
 		return m, nil
 	case replicateDoneMsg:
 		if msg.err != nil {
@@ -355,7 +388,7 @@ func (m model) viewTransfer() string {
 		title += "   " + okStyle.Render(m.cmdr.status)
 	}
 	body := m.cmdr.view(m.width, m.height-2)
-	foot := footerStyle.Render(" tab switch  ↑/↓ move  ↵ open  F5 replicate →  r reload  esc/F1 back")
+	foot := footerStyle.Render(" tab swap source/target  ↑/↓ move  ↵ open  c connect pane to a server  F5 replicate source→target  r reload  esc/F1 back")
 	return lipgloss.JoinVertical(lipgloss.Left, title, body, foot)
 }
 
@@ -381,7 +414,7 @@ func (m model) viewBrowse() string {
 		rightW = 12
 	}
 	left := paneFocus.Width(leftW).Height(bodyH).Render(m.renderList(leftW, bodyH))
-	right := paneStyle.Width(rightW).Height(bodyH).Render(m.renderDossier(bodyH))
+	right := paneStyle.Width(rightW).Height(bodyH).Render(m.renderDossier(rightW-2, bodyH))
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
 	foot := footerStyle.Render(" ↑/↓ move  c connect  b bookmark  r reload  q quit    [F1 files] F2 transfer F3 restore F4 pools (coming)")
@@ -453,10 +486,15 @@ func (m model) renderList(w, h int) string {
 	return b.String()
 }
 
-func (m model) renderDossier(h int) string {
+func (m model) renderDossier(w, h int) string {
 	lines := strings.Split(m.dossier, "\n")
 	if len(lines) > h {
 		lines = lines[:h]
+	}
+	// hard-clamp every line to the pane — a too-long line would soft-wrap and
+	// interleave the packed columns into garbage
+	for i, l := range lines {
+		lines[i] = truncate(l, w)
 	}
 	return strings.Join(lines, "\n")
 }

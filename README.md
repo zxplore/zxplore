@@ -28,6 +28,11 @@ It's a **primitives** tool, not a management UI: every action maps to a plain
 show the literal command before they run, and every executed mutation lands in
 an audit log.
 
+<div align="center">
+<img src="docs/screenshots/browser-dark.png" width="920" alt="The same console in dark steel — full dossier with every property and its source, one ⚙ Edit away from changing any of them"/>
+<br/><sub>Dark or light — it follows your desktop. Every property, with its source, one <b>Edit</b> away from being changed.</sub>
+</div>
+
 ---
 
 ## The killer feature: your files, across time
@@ -57,7 +62,7 @@ On most systems you *back up* your data. With ZFS, the filesystem already
 | <img src="docs/screenshots/snapshot-actions.png" alt="Snapshot actions"/> | **Snapshots as first-class objects.** Enter or click any snapshot: roll back (with an explicit warning about exactly what gets destroyed), clone to a new dataset, browse its files, diff it against live, hold/release, destroy. |
 | <img src="docs/screenshots/server-manager-dark.png" alt="Server manager, dark theme"/> | **Any ZFS box, from here.** WinSCP-style saved servers with key-first auth — generate, paste, or point at a key, then authorize it with a password used *once* and never stored. Jump hosts, custom ports. Replication runs local↔remote or even remote↔remote, incremental when a common snapshot exists. |
 | <img src="docs/screenshots/boot-environments.png" alt="Boot environments"/> | **Boot environments** — derived from the pool's `bootfs`, never a hardcoded name: create restore points, roll back, delete. |
-| <img src="docs/screenshots/pools.png" alt="Pool manager"/> | **Pools** — health pinned at the top of every view; scrub, trim, clear errors, full status, and **Scan / Import** to find and import exported pools (moved disks, rescue boots). |
+| <img src="docs/screenshots/pools.png" alt="Pool manager"/> | **Pools** — health pinned at the top of every view; scrub, trim, clear errors, **Scan / Import** for exported pools (moved disks, rescue boots), and a **drill-down dossier**: vdev topology with per-device error counters, one-shot iostat, the pool's file layout, and the two truths of free space — `zfs list` next to `df`, which famously disagree by design. |
 
 Plus the daily-driver details: a dossier with **every** property and its
 source (`local` / `inherited from …` / `default`), both permission layers
@@ -127,10 +132,10 @@ zxplore-tui        # the static terminal binary (same UI)
 man zxplore        # full documentation
 ```
 
-**Keys:** `F1`/`F2` switch Browser/Transfer · `↑↓` `PgUp`/`PgDn` `Home`/`End`
-move · `Ctrl+F` (or `/`) find · **right-click a dataset** for the full
-lifecycle menu · `Enter` or click a snapshot for actions · `Esc` dismiss ·
-`Alt+Q` quit.
+**Keys:** `F1`/`F2` switch Browser/Transfer · `Tab` hop between panes · `↑↓`
+`PgUp`/`PgDn` `Home`/`End` move · `Ctrl+F` (or `/`) find · **right-click a
+dataset** for the full lifecycle menu · `Enter` or click a snapshot for
+actions · `Esc` dismiss · `Alt+Q` quit.
 
 ## Security model
 

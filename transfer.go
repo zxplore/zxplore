@@ -103,12 +103,17 @@ func (p *pane) descend() {
 	}
 }
 
+// title says WHERE this pane is, unambiguously: LOCAL vs REMOTE user@host.
 func (p pane) title() string {
 	loc := p.location
 	if loc == "" {
 		loc = "/"
 	}
-	return p.host.Label() + ":" + loc
+	where := "LOCAL"
+	if p.host.SSH != "" {
+		where = "REMOTE " + p.host.SSH
+	}
+	return where + " : " + loc
 }
 
 // commander holds the two panes + which is active.
@@ -239,7 +244,12 @@ func (c commander) renderPane(i, w, h int) string {
 	if i == c.active {
 		style = paneFocus
 	}
-	title := truncate(p.title(), w-2)
+	// the ACTIVE pane is the replication SOURCE; the other is the TARGET
+	role := "TARGET"
+	if i == c.active {
+		role = "SOURCE ▸"
+	}
+	title := truncate(role+"  "+p.title(), w-2)
 	if i == c.active {
 		title = hostStyle.Render(title)
 	} else {

@@ -80,26 +80,35 @@ func showPoolManager(w fyne.Window, onChange func()) {
 	stopBtn := act("Stop scrub", func(p string) error { return ScrubPool(host, p, false) })
 	trimBtn := act("Trim", func(p string) error { return TrimPool(host, p) })
 	clearBtn := act("Clear errors", func(p string) error { return ClearPool(host, p) })
-	statusBtn := widget.NewButton("Status…", func() {
+	// Drill down: the pool dossier — vitals, BOTH space truths (zfs vs df),
+	// vdev tree with error counters, one-shot iostat — plus a jump into the
+	// pool's file layout via the snapshot explorer.
+	drillBtn := widget.NewButton("Drill down…", func() {
 		p := selPool()
 		if p == "" {
 			return
 		}
 		go func() {
-			txt, err := PoolStatusText(host, p)
+			txt := PoolDossier(host, p)
 			fyne.Do(func() {
-				if err != nil {
-					dialog.ShowError(err, w)
-					return
-				}
-				e := widget.NewMultiLineEntry()
-				e.SetText(txt)
-				e.TextStyle = fyne.TextStyle{Monospace: true}
-				sd := dialog.NewCustom("zpool status "+p, "Close", container.NewScroll(e), w)
-				sd.Resize(fyne.NewSize(780, 520))
+				rt := widget.NewRichText()
+				rt.Wrapping = fyne.TextWrapOff
+				rt.Segments = dossierSegments(txt)
+				browse := widget.NewButton("Browse files…", func() {
+					showSnapshotExplorer(host, p, "")
+				})
+				body := container.NewBorder(nil, container.NewHBox(browse), nil, nil,
+					container.NewScroll(rt))
+				sd := dialog.NewCustom("Pool — "+p, "Close", body, w)
+				sd.Resize(fyne.NewSize(1020, 700))
 				sd.Show()
 			})
 		}()
+	})
+	browseBtn := widget.NewButton("Browse files…", func() {
+		if p := selPool(); p != "" {
+			showSnapshotExplorer(host, p, "")
+		}
 	})
 
 	// Scan / Import: find exported pools on this machine's devices and import
@@ -149,7 +158,7 @@ func showPoolManager(w fyne.Window, onChange func()) {
 		}()
 	})
 
-	buttons := container.NewHBox(scrubBtn, stopBtn, trimBtn, clearBtn, statusBtn, importBtn)
+	buttons := container.NewHBox(drillBtn, browseBtn, scrubBtn, stopBtn, trimBtn, clearBtn, importBtn)
 	body := container.NewBorder(
 		widget.NewLabelWithStyle("Pools — select one, then act", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		buttons, nil, nil, container.NewStack(list, container.NewCenter(empty)))

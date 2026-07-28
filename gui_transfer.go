@@ -27,6 +27,7 @@ import (
 )
 
 type xferPane struct {
+	side     string // "LEFT" / "RIGHT" — pins the pane in the operator's head
 	host     Host
 	location string // "" = list all datasets; else list this path + descendants
 	datasets []Dataset
@@ -35,8 +36,8 @@ type xferPane struct {
 	title    *widget.Label
 }
 
-func newXferPane(switchTab func(fyne.KeyName)) *xferPane {
-	p := &xferPane{sel: -1}
+func newXferPane(side string, switchTab func(fyne.KeyName)) *xferPane {
+	p := &xferPane{side: side, sel: -1}
 	p.title = widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	p.list = newNavList(
 		func() int { return len(p.datasets) },
@@ -67,9 +68,14 @@ func (p *xferPane) reload() {
 		p.sel = -1
 	}
 	p.list.Refresh()
-	label := "● " + p.host.Label()
+	// Say WHERE this pane is, unambiguously: LOCAL vs REMOTE user@host.
+	where := "● LOCAL — this machine"
+	if p.host.SSH != "" {
+		where = "● REMOTE — " + p.host.SSH
+	}
+	label := p.side + "  " + where
 	if p.location != "" {
-		label += ":" + p.location
+		label += "   " + p.location
 	}
 	if err != nil {
 		label += "    ✗ " + err.Error()
@@ -103,10 +109,10 @@ func (p *xferPane) view(onLocal, onConnect func()) fyne.CanvasObject {
 }
 
 func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject {
-	left := newXferPane(switchTab) // LOCAL source
+	left := newXferPane("LEFT", switchTab) // starts on the local machine
 	left.reload()
-	right := newXferPane(switchTab) // TARGET
-	right.title.SetText("● (no target — click Connect…)")
+	right := newXferPane("RIGHT", switchTab)
+	right.title.SetText("RIGHT  ○ not connected — click Local or Connect…")
 
 	// Connect a pane to Local or a saved server (via the server manager). Both
 	// panes are connectable, so a remote→remote (FXP-style) replication works.
@@ -174,6 +180,10 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 				}()
 			}, w)
 	}
+
+	// Tab hops between the two panes.
+	left.list.onTab = func() { w.Canvas().Focus(right.list) }
+	right.list.onTab = func() { w.Canvas().Focus(left.list) }
 
 	btnLR := widget.NewButton("Replicate left → right", func() { replicate(left, right) })
 	btnRL := widget.NewButton("Replicate right → left", func() { replicate(right, left) })

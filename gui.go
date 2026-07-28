@@ -40,7 +40,7 @@ const (
 
 // helpHints is the tmux-style status line along the bottom. Keep it TRUE — only
 // keys/gestures that actually work, so it stays a contract, not decoration.
-const helpHints = "  F1 browser   F2 transfer    ↑↓ move   PgUp/PgDn page   Ctrl+F or / find   right-click = actions   Alt+Q quit  "
+const helpHints = "  F1 browser   F2 transfer    ↑↓ move   Tab switch pane   PgUp/PgDn page   Ctrl+F or / find   right-click = actions   Alt+Q quit  "
 
 // navPage is how many rows PgUp/PgDn jump.
 const navPage = 12
@@ -243,7 +243,13 @@ type navList struct {
 	onFunc      func(fyne.KeyName)     // F-key section switch
 	onEnter     func()                 // Enter/Return acts on the current row
 	onSecondary func(*fyne.PointEvent) // right-click → context menu
+	onTab       func()                 // Tab hops to the sibling pane
 }
+
+// AcceptsTab lets Tab reach TypedKey — without it Fyne's focus walk swallows
+// the key and "tabbing between panes" dies in a random button. Only claimed
+// when a pane hop is actually wired.
+func (l *navList) AcceptsTab() bool { return l.onTab != nil }
 
 // TappedSecondary fires on right-click. Row labels don't handle it, so Fyne
 // routes it here; we act on the current (hover-selected) row.
@@ -307,6 +313,10 @@ func (l *navList) TypedKey(e *fyne.KeyEvent) {
 	case fyne.KeyReturn, fyne.KeyEnter:
 		if l.onEnter != nil {
 			l.onEnter()
+		}
+	case fyne.KeyTab:
+		if l.onTab != nil {
+			l.onTab()
 		}
 	default:
 		l.List.TypedKey(e) // native ↑/↓/Space
@@ -617,6 +627,9 @@ func runGUI() {
 	}
 	list.onFunc = switchTab
 	snapsList.onFunc = switchTab
+	// Tab hops dataset list ⇄ snapshot list (the two keyboard panes).
+	list.onTab = func() { w.Canvas().Focus(snapsList) }
+	snapsList.onTab = func() { w.Canvas().Focus(list) }
 	tabs = container.NewAppTabs(
 		container.NewTabItem("Browser", split),
 		container.NewTabItem("Transfer", transferTab(w, switchTab)),

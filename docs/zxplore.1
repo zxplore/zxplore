@@ -68,7 +68,13 @@ shows guidance instead of an empty list: how to install OpenZFS, how to
 import or create a pool, or how to connect to a remote ZFS box.
 The pool manager can scan for exported pools
 .Pq Ql zpool import
-and import one.
+and import one, and drill into any pool: vitals and tuning properties, the
+vdev topology with per-device error counters, one-shot I/O statistics, the
+pool's file layout, and BOTH space accountings \(em what
+.Ql zfs list
+says (snapshots, children, reservations included) next to what
+.Xr df 1
+reports, which famously disagree by design.
 .Sh SNAPSHOT EXPLORER
 The explorer fuses the file level with the snapshot level.
 It browses the files of a dataset \(em the live tree, or transparently
@@ -122,6 +128,9 @@ permission additionally enables unprivileged
 .Bl -tag -width "PgUp/PgDn, Home/End" -compact
 .It F1 / F2
 switch Browser / Transfer.
+.It Tab
+hop between panes (dataset list \(u2194 snapshots; transfer left \(u2194
+right; explorer files \(u2194 versions).
 .It Arrows, PgUp/PgDn, Home/End
 move; the detail pane follows.
 .It Ctrl+F or /

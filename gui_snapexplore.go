@@ -253,6 +253,9 @@ func showSnapshotExplorer(h Host, dataset, initialSource string) {
 		}
 	}
 	fileList.onEnter = openCur
+	// Tab hops files ⇄ versions.
+	fileList.onTab = func() { win.Canvas().Focus(versList) }
+	versList.onTab = func() { win.Canvas().Focus(fileList) }
 
 	// ── actions ──
 	doRestore := func(overwrite bool) {

@@ -357,7 +357,12 @@ func packColumns(blocks []dblock, cols int) string {
 	return b.String()
 }
 
-func Dossier(h Host, dataset string) string {
+// Dossier renders the full detail block at the GUI's width (4 columns).
+func Dossier(h Host, dataset string) string { return DossierCols(h, dataset, 4) }
+
+// DossierCols renders it packed into a given column count — the TUI picks the
+// count from its pane width so the grid never wraps/interleaves in a terminal.
+func DossierCols(h Host, dataset string, cols int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s   [%s]\n", dataset, singleProp(h, dataset, "type"))
 
@@ -425,7 +430,7 @@ func Dossier(h Host, dataset string) string {
 		cards = append(cards, dblock{lines: append([]string{"━━ OTHER / CUSTOM ━━"}, otherLines...)})
 	}
 	b.WriteString("\n")
-	b.WriteString(packColumns(cards, 4))
+	b.WriteString(packColumns(cards, cols))
 
 	// ── PERMISSIONS (full width): POSIX + ACL on the mountpoint, then ZFS delegations ──
 	b.WriteString("\n━━━ PERMISSIONS ━━━\n")
@@ -800,6 +805,87 @@ func PoolsOverview(h Host) string {
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// PoolDossier renders a deep text drill-down of one pool: vitals + tuning
+// properties, BOTH space truths (ZFS accounting vs what df reports — famously
+// different, by design), the vdev topology with per-device error counters,
+// and one-shot I/O stats. All read-only, all plain zpool/zfs/df.
+func PoolDossier(h Host, pool string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s   [zpool]\n", pool)
+
+	b.WriteString("\n━━━ VITALS ━━━\n")
+	if out, err := run(h.command("zpool", "list", "-H", "-o",
+		"health,size,alloc,free,capacity,fragmentation,dedupratio", pool)); err == nil {
+		f := strings.Split(strings.TrimRight(out, "\n"), "\t")
+		if len(f) >= 7 {
+			fmt.Fprintf(&b, "  health %-10s size %-8s alloc %-8s free %-8s cap %-5s frag %-5s dedup %s\n",
+				f[0], f[1], f[2], f[3], f[4], f[5], f[6])
+		}
+	}
+	if out, err := run(h.command("zpool", "get", "-H", "-o", "property,value",
+		"ashift,autotrim,autoexpand,autoreplace,failmode,delegation,readonly,multihost,guid", pool)); err == nil {
+		line := "  "
+		for _, l := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+			f := strings.Split(l, "\t")
+			if len(f) >= 2 {
+				line += f[0] + " " + f[1] + "   "
+			}
+		}
+		b.WriteString(strings.TrimRight(line, " ") + "\n")
+	}
+
+	// ── the two truths of free space ──
+	b.WriteString("\n━━━ SPACE — THE TWO TRUTHS (zfs vs df) ━━━\n")
+	b.WriteString("  ZFS accounting (zfs list — snapshots, children, reservations included):\n")
+	fmt.Fprintf(&b, "    %-28s %8s %8s %8s %9s %8s %8s\n",
+		"DATASET", "USED", "AVAIL", "REFER", "SNAPSHOTS", "ITSELF", "CHILDREN")
+	if out, err := run(h.command("zfs", "list", "-H", "-p", "-o",
+		"name,used,available,referenced,usedbysnapshots,usedbydataset,usedbychildren",
+		"-r", "-d", "1", "-t", "filesystem", pool)); err == nil {
+		for _, l := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+			f := strings.Split(l, "\t")
+			if len(f) >= 7 {
+				fmt.Fprintf(&b, "    %-28s %8s %8s %8s %9s %8s %8s\n",
+					f[0], human(f[1]), human(f[2]), human(f[3]), human(f[4]), human(f[5]), human(f[6]))
+			}
+		}
+	} else {
+		fmt.Fprintf(&b, "    (cannot list: %v)\n", err)
+	}
+	b.WriteString("\n  df sees (per mounted dataset of this pool):\n")
+	if out, err := run(h.command("df", "-h")); err == nil {
+		shown := 0
+		for _, l := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+			f := strings.Fields(l)
+			if len(f) >= 6 && (f[0] == pool || strings.HasPrefix(f[0], pool+"/")) {
+				fmt.Fprintf(&b, "    %-34s %6s used %6s avail %5s   %s\n", f[0], f[2], f[3], f[4], f[5])
+				shown++
+			}
+		}
+		if shown == 0 {
+			b.WriteString("    (no mounted datasets from this pool)\n")
+		}
+	}
+	b.WriteString("\n  Why they disagree (by design): df shows each mount's view of the SHARED\n" +
+		"  pool free space; zfs 'used' also carries snapshots, reservations and\n" +
+		"  children; raidz parity and compression skew both. zfs is the truth.\n")
+
+	b.WriteString("\n━━━ VDEV TOPOLOGY & ERRORS ━━━\n")
+	if st, err := run(h.command("zpool", "status", "-v", pool)); err == nil {
+		for _, l := range strings.Split(strings.TrimRight(st, "\n"), "\n") {
+			b.WriteString("  " + l + "\n")
+		}
+	}
+
+	b.WriteString("\n━━━ I/O (cumulative, per vdev) ━━━\n")
+	if io, err := run(h.command("zpool", "iostat", "-v", pool)); err == nil {
+		for _, l := range strings.Split(strings.TrimRight(io, "\n"), "\n") {
+			b.WriteString("  " + l + "\n")
+		}
+	}
+	return b.String()
 }
 
 // ListPools lists pool names (the root datasets) at a host.
