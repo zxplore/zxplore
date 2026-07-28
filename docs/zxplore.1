@@ -101,17 +101,184 @@ colored by change type
 .Pq modified, added, removed, renamed
 and filterable by path substring.
 .Sh REMOTE OPERATION
-Saved servers connect over
+A saved server is a name, an
+.Ar user@host Ns Op : Ns Ar port ,
+an optional dataset path that scopes what the pane shows, an optional jump
+host, and a private key.
+Everything runs over stock
 .Xr ssh 1
-with key-first authentication: generate or import a key, then authorize it
-on the server with a password used exactly once and never stored.
-Jump hosts (ProxyJump chains) and non-default ports are supported.
+\(em the remote end needs
+.Em nothing
+but OpenZFS and an SSH daemon.
+No agent, no daemon, no zxplore install on the far side.
+.Pp
+When connecting,
+.Nm
+invokes ssh with
+.Fl o Cm BatchMode=yes ,
+.Fl o Cm ConnectTimeout=8 ,
+and, when a key is configured,
+.Fl i Ar keyfile
+plus
+.Fl o Cm IdentitiesOnly=yes .
+Because it is plain ssh, everything in your
+.Pa ~/.ssh/config
+still applies \(em including
+.Cm Host
+aliases, which are accepted in the host field (see
+.Sx SSH CONFIGURATION ) .
+.Pp
 Replication streams
 .Ql zfs send
 into
 .Ql zfs recv
-for any local/remote combination, incremental when a common snapshot
-exists, into a readonly, non-automounting target.
+for any local/remote combination \(em including remote\(->remote \(em
+incremental when the two ends share a snapshot, into a target received
+readonly and non-automounting so it can never drift out of the incremental
+chain.
+.Sh KEY SETUP
+The intended flow is key-first: a password crosses the wire exactly once,
+to install the key, and is never stored.
+.Pp
+In the app:
+.Bl -enum -offset indent -compact
+.It
+.Ic Servers\(->New :
+name it, set host and user.
+.It
+.Ic Generate key
+creates a fresh ed25519 keypair under
+.Pa ~/.config/zxplore/keys/<name>
+(mode 0600); or
+.Ic Paste key
+/
+.Ic Use key file
+to bring your own.
+.It
+.Ic Authorize on server
+asks for the account password once and appends the public key to the
+server's
+.Pa ~/.ssh/authorized_keys .
+.It
+.Ic Test connection
+verifies both the login and that ZFS is visible.
+.El
+.Pp
+The same thing by hand, if you prefer your own tooling:
+.Bd -literal -offset indent
+$ ssh-keygen -t ed25519 -f ~/.ssh/zfs_fleet -C zfs-fleet
+$ ssh-copy-id -i ~/.ssh/zfs_fleet.pub zexp@box1.example.com
+.Ed
+.Pp
+then point the server's key field at
+.Pa ~/.ssh/zfs_fleet
+with
+.Ic Use key file .
+One key can serve the whole fleet \(em authorize it everywhere and reuse
+the path in every saved server.
+.Sh SSH CONFIGURATION
+Because every remote command is plain
+.Xr ssh 1 ,
+a few lines of
+.Pa ~/.ssh/config
+turn
+.Nm
+into a fleet tool.
+A worked example for a fleet with a bastion:
+.Bd -literal -offset indent
+# every ZFS box, one identity, multiplexed connections
+Host zfs-*
+    User zexp
+    IdentityFile ~/.ssh/zfs_fleet
+    IdentitiesOnly yes
+    ControlMaster auto
+    ControlPath ~/.ssh/cm-%r@%h-%p
+    ControlPersist 5m
+    ServerAliveInterval 15
+
+Host zfs-nyc1
+    HostName 203.0.113.10
+Host zfs-nyc2
+    HostName 203.0.113.11
+
+# the lab racks are only reachable through the bastion
+Host zfs-lab*
+    ProxyJump ops@bastion.example.com
+.Ed
+.Pp
+With that in place, a saved server's host field is just
+.Ql zfs-nyc1
+\(em no user, port, or key needed in
+.Nm
+at all.
+.Pp
+.Cm ControlMaster Ns / Ns Cm ControlPersist
+is the single most useful line for
+.Nm :
+each browse, dossier, and snapshot listing is its own ssh command, and
+connection multiplexing turns every one after the first into a
+millisecond-class round trip instead of a fresh TCP+auth handshake.
+Remote browsing feels local.
+.Pp
+Jump hosts can also be set per saved server in the app (the
+.Ic Jump host
+field, comma-separated for multi-hop), which
+.Nm
+passes as
+.Fl o Cm ProxyJump .
+Command-line options passed by
+.Nm
+(BatchMode, ConnectTimeout, the identity) take precedence over the config
+file, per
+.Xr ssh_config 5 .
+.Sh MANAGING A FLEET
+The agentless recipe for N machines, once per machine, as root:
+.Bd -literal -offset indent
+# useradd -m zexp                      (FreeBSD: pw useradd zexp -m)
+# install -d -m 700 -o zexp `eval echo ~zexp`/.ssh
+# echo 'ssh-ed25519 AAAA... zfs-fleet' \e
+    > `eval echo ~zexp`/.ssh/authorized_keys
+# chown zexp `eval echo ~zexp`/.ssh/authorized_keys
+# chmod 600 `eval echo ~zexp`/.ssh/authorized_keys
+# zfs allow zexp \e
+    send,snapshot,hold,diff,mount tank
+.Ed
+.Pp
+That last line is the point: with
+.Xr zfs-allow 8
+delegation,
+.Nm
+drives the box read/replicate-wise with no root login and no sudo on the
+remote at all.
+Add
+.Ql create,receive
+on a backup target so it can accept streams:
+.Bd -literal -offset indent
+# zfs create tank/backups
+# zfs allow zexp create,receive,mount tank/backups
+.Ed
+.Pp
+Scope a saved server's
+.Ic Path
+field to
+.Ql tank/backups
+and the transfer pane shows exactly that subtree \(em which is also all a
+delegated user can list.
+.Pp
+Headless boxes get the static binary; it has no dependencies:
+.Bd -literal -offset indent
+$ make zxplore-tui
+$ for h in zfs-nyc1 zfs-nyc2 zfs-lab1; do
+>   scp zxplore-tui $h:/usr/local/bin/zxplore
+> done
+.Ed
+.Pp
+Every mutating command
+.Nm
+runs \(em on any host \(em lands in the audit log with its timestamp,
+target host, and exact argv, so the fleet's change history is one
+.Xr grep 1
+away.
 .Sh PRIVILEGES
 .Nm
 runs unprivileged and elevates per command: locally through
@@ -124,6 +291,16 @@ rather than connecting as root; the
 .Ql diff
 permission additionally enables unprivileged
 .Ql zfs diff .
+.Pp
+Useful delegation sets, from least to most trusted:
+.Bl -tag -width "replication target" -offset indent -compact
+.It read/observe
+.Ql send,hold,diff,mount
+.It operator
+.Ql send,snapshot,hold,diff,mount,clone,promote
+.It replication target
+.Ql create,receive,mount
+.El
 .Sh KEY BINDINGS
 .Bl -tag -width "PgUp/PgDn, Home/End" -compact
 .It F1 / F2
@@ -153,6 +330,8 @@ Passphrases never appear (they are not argv).
 .It Pa ~/.config/zxplore/servers.json
 saved servers.
 Contains no passwords \(em key paths only.
+.It Pa ~/.config/zxplore/keys/
+private keys generated or pasted in the app, mode 0600.
 .It Pa MOUNTPOINT/.zfs/snapshot
 the per-dataset snapshot directory the explorer reads.
 Works whether the
@@ -173,11 +352,38 @@ Build the static terminal binary and drop it on a storage box:
 .Pp
 .Dl $ make zxplore-tui && scp zxplore-tui box:/usr/local/bin/zxplore
 .Pp
-Delegate enough to browse, snapshot, and diff a dataset unprivileged:
+Create and authorize a fleet key by hand:
+.Bd -literal -offset indent
+$ ssh-keygen -t ed25519 -f ~/.ssh/zfs_fleet -C zfs-fleet
+$ ssh-copy-id -i ~/.ssh/zfs_fleet.pub zexp@zfs-nyc1
+.Ed
+.Pp
+Delegate enough for a user to browse, snapshot, and diff, unprivileged:
 .Pp
 .Dl # zfs allow carol send,snapshot,hold,diff,mount tank/data
+.Pp
+Prepare a backup box to receive replication from zxplore:
+.Bd -literal -offset indent
+# zfs create tank/backups
+# zfs allow zexp create,receive,mount tank/backups
+.Ed
+.Pp
+What the explorer's
+.Dq restore from snapshot
+runs under the hood \(em the same thing you could type:
+.Pp
+.Dl # cp -a /tank/data/.zfs/snapshot/daily-2026-07-20/etc/pf.conf /tank/data/etc/pf.conf.from-daily-2026-07-20
+.Pp
+Review everything
+.Nm
+has ever changed, newest last:
+.Pp
+.Dl $ tail ~/.local/state/zxplore/audit.log
 .Sh SEE ALSO
 .Xr ssh 1 ,
+.Xr ssh-copy-id 1 ,
+.Xr ssh-keygen 1 ,
+.Xr ssh_config 5 ,
 .Xr zfs 8 ,
 .Xr zfs-allow 8 ,
 .Xr zpool 8
