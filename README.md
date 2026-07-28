@@ -79,12 +79,28 @@ pools, or no ZFS at all.
 
 ## Install
 
+**Linux**
+
 ```
 git clone https://github.com/zxplore/zxplore
 cd zxplore
 make               # builds ./zxplore (GUI+TUI) and ./zxplore-tui (static)
 sudo make install  # binaries + man page + icons + launchers
 ```
+
+**FreeBSD** — OpenZFS is in base; use `gmake` (the Makefile is GNU make):
+
+```
+pkg install -y go gmake pkgconf mesa-libs libX11 libxkbcommon wayland fontconfig
+git clone https://github.com/zxplore/zxplore
+cd zxplore
+gmake && gmake install         # as root; installs to /usr/local
+```
+
+Terminal-only FreeBSD box? `pkg install -y go gmake` is enough —
+`gmake zxplore-tui` builds the static TUI with no graphics deps at all.
+(GUI privileged actions use `pkexec` — `pkg install polkit`; the TUI elevates
+via `sudo`/root.)
 
 Two binaries come out of one tree — both get a desktop launcher:
 
@@ -117,8 +133,8 @@ sudo apt-get install -y golang gcc pkg-config libgl1-mesa-dev xorg-dev \
 sudo pacman -S --needed go gcc pkgconf libgl libxcursor libxrandr \
   libxinerama libxi wayland libxkbcommon fontconfig
 
-# FreeBSD
-pkg install -y go pkgconf mesa-libs libX11 libxkbcommon wayland fontconfig
+# FreeBSD (build with gmake, not make)
+pkg install -y go gmake pkgconf mesa-libs libX11 libxkbcommon wayland fontconfig
 ```
 </details>
 

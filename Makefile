@@ -21,8 +21,10 @@
 #                    libxkbcommon-dev libfontconfig1-dev
 #   Arch:          pacman -S --needed go gcc pkgconf libgl libxcursor \
 #                    libxrandr libxinerama libxi wayland libxkbcommon fontconfig
-#   FreeBSD:       pkg install -y go pkgconf mesa-libs libX11 libxkbcommon \
-#                    wayland fontconfig
+#   FreeBSD:       pkg install -y go gmake pkgconf mesa-libs libX11 \
+#                    libxkbcommon wayland fontconfig
+#                  (BSD make can't parse this file — build with `gmake`;
+#                   `gmake zxplore-tui` needs only go + gmake, no GL)
 #
 # RUNTIME dependencies (installed system): libGL, an X11/Wayland session, and
 # fontconfig. Headless/SSH: `zxplore --tui` (terminal UI, no GL needed).

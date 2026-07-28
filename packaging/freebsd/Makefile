@@ -1,16 +1,18 @@
 PORTNAME=	zxplore
 DISTVERSION=	0.1.0
 CATEGORIES=	sysutils
-MAINTAINER=	hello@zxplore.ca
+MAINTAINER=	admin@zxplore.dev
 COMMENT=	Direct interface to your ZFS primitives — not a dashboard
-WWW=		https://zxplore.ca
+WWW=		https://zxplore.dev
 
 LICENSE=	BSD3CLAUSE
 
-RUN_DEPENDS=	bash:shells/bash
-USES=		gmake
-NO_ARCH=	yes
-PLIST_FILES=	bin/zxplore bin/zxplore-api bin/zxplore-txn
+USES=		gmake go
+PLIST_FILES=	bin/zxplore \
+		bin/zxplore-tui \
+		bin/zxplore-api \
+		bin/zxplore-txn \
+		share/man/man1/zxplore.1.gz
 
 do-install:
 	${MAKE_CMD} -C ${WRKSRC} DESTDIR=${STAGEDIR} PREFIX=${PREFIX} install
