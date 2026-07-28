@@ -54,9 +54,11 @@ install: build
 	install -d $(BINDIR) $(APPDIR) $(ICONDIR) $(DOCDIR) $(MANDIR)
 	install -m 0755 zxplore                  $(BINDIR)/zxplore
 	install -m 0755 zxplore-tui              $(BINDIR)/zxplore-tui
-	install -m 0644 docs/zxplore.1           $(MANDIR)/zxplore.1
-	install -m 0644 assets/zxplore.svg       $(ICONDIR)/zxplore.svg
-	install -m 0644 contrib/zxplore.desktop  $(APPDIR)/zxplore.desktop
+	install -m 0644 docs/zxplore.1               $(MANDIR)/zxplore.1
+	install -m 0644 assets/zxplore.svg           $(ICONDIR)/zxplore.svg
+	install -m 0644 assets/zxplore-tui.svg       $(ICONDIR)/zxplore-tui.svg
+	install -m 0644 contrib/zxplore.desktop      $(APPDIR)/zxplore.desktop
+	install -m 0644 contrib/zxplore-tui.desktop  $(APPDIR)/zxplore-tui.desktop
 	install -m 0644 README.md docs/DESIGN.md $(DOCDIR)
 	# Optional host-side transaction API (Python) + guest CLI, when present.
 	@if [ -f bin/zxplore-api ]; then \
@@ -71,7 +73,8 @@ install: build
 uninstall:
 	rm -f $(BINDIR)/zxplore $(BINDIR)/zxplore-tui
 	rm -f $(BINDIR)/zxplore-api $(BINDIR)/zxplore-txn
-	rm -f $(APPDIR)/zxplore.desktop $(ICONDIR)/zxplore.svg
+	rm -f $(APPDIR)/zxplore.desktop $(APPDIR)/zxplore-tui.desktop
+	rm -f $(ICONDIR)/zxplore.svg $(ICONDIR)/zxplore-tui.svg
 	rm -f $(MANDIR)/zxplore.1
 	rm -f $(UNITDIR)/zxplore-api.service
 	rm -rf $(DOCDIR)

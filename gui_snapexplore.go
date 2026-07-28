@@ -290,7 +290,7 @@ func showSnapshotExplorer(h Host, dataset, initialSource string) {
 			}()
 		}, win)
 	}
-	restoreBtn := widget.NewButtonWithIcon("Restore → live (overwrite)…", theme.HistoryIcon(),
+	restoreBtn := widget.NewButtonWithIcon("Restore over live (overwrite)…", theme.HistoryIcon(),
 		func() { doRestore(true) })
 	restoreBtn.Importance = widget.WarningImportance
 	copyBtn := widget.NewButton("Restore as copy…", func() { doRestore(false) })

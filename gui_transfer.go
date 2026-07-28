@@ -175,8 +175,8 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 			}, w)
 	}
 
-	btnLR := widget.NewButton("Replicate  →", func() { replicate(left, right) })
-	btnRL := widget.NewButton("←  Replicate", func() { replicate(right, left) })
+	btnLR := widget.NewButton("Replicate left → right", func() { replicate(left, right) })
+	btnRL := widget.NewButton("Replicate right → left", func() { replicate(right, left) })
 	bar := container.NewCenter(container.NewHBox(btnLR, widget.NewLabel("        "), btnRL))
 
 	split := container.NewHSplit(

@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- zxplore TUI icon: the same layered-datasets + replicate-branch mark as
+       the GUI icon, restyled as a terminal — dark steel tile, electric-green
+       name-rows, and a shell prompt. Siblings at a glance. -->
+  <defs>
+    <linearGradient id="bgT" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1a222c"/>
+      <stop offset="1" stop-color="#0a0d12"/>
+    </linearGradient>
+    <linearGradient id="plateT" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#243244"/>
+      <stop offset="1" stop-color="#182330"/>
+    </linearGradient>
+    <filter id="shT" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="7" stdDeviation="9" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <!-- rounded app tile -->
+  <rect x="16" y="16" width="480" height="480" rx="116" fill="url(#bgT)"/>
+  <rect x="16" y="16" width="480" height="480" rx="116" fill="none" stroke="#2a3a48" stroke-width="4"/>
+
+  <!-- stacked dataset plates (bottom → top), offset for depth -->
+  <g filter="url(#shT)">
+    <rect x="116" y="288" width="280" height="62" rx="16" fill="url(#plateT)" opacity="0.55"/>
+    <rect x="116" y="214" width="280" height="62" rx="16" fill="url(#plateT)" opacity="0.80"/>
+    <rect x="116" y="140" width="280" height="62" rx="16" fill="url(#plateT)"/>
+  </g>
+
+  <!-- dataset name-rows on each plate — electric terminal green -->
+  <g fill="#3dff88">
+    <rect x="140" y="165" width="150" height="12" rx="6" opacity="0.95"/>
+    <rect x="140" y="239" width="120" height="12" rx="6" opacity="0.65"/>
+    <rect x="140" y="313" width="100" height="12" rx="6" opacity="0.40"/>
+  </g>
+
+  <!-- snapshot / replicate branch: node on the top plate → replica dot -->
+  <g>
+    <path d="M356 171 C 408 171, 420 118, 420 92" stroke="#f0b064" stroke-width="11" fill="none" stroke-linecap="round"/>
+    <circle cx="356" cy="171" r="15" fill="#f0b064"/>
+    <circle cx="420" cy="82" r="19" fill="#f0b064"/>
+  </g>
+
+  <!-- shell prompt: ❯ chevron + block cursor -->
+  <g>
+    <path d="M128 386 L166 412 L128 438" stroke="#3dff88" stroke-width="16" fill="none"
+          stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="192" y="398" width="58" height="28" rx="5" fill="#3dff88">
+      <animate attributeName="opacity" values="1;1;0;0;1" dur="2s" repeatCount="indefinite"/>
+    </rect>
+  </g>
+</svg>

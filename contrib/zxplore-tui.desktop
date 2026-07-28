@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=zxplore (terminal)
+GenericName=ZFS Console — TUI
+Comment=The universal ZFS console, terminal edition — browse, snapshot, replicate
+Exec=zxplore-tui
+Icon=zxplore-tui
+Terminal=true
+Categories=System;Utility;FileTools;ConsoleOnly;
+Keywords=zfs;zpool;snapshot;replicate;storage;tui;terminal;
