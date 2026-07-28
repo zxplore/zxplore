@@ -16,3 +16,7 @@ assets/*.png
 
 # git bundles
 *.bundle
+
+# brain lays this down locally — NEVER in the public repo
+/CLAUDE.md
+CLAUDE.md.bak.*
