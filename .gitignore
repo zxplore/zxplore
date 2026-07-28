@@ -13,3 +13,6 @@ __pycache__/
 
 # rendered icon rasters
 assets/*.png
+
+# git bundles
+*.bundle

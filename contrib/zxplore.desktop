@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=zxplore
+GenericName=ZFS Console
+Comment=The universal ZFS console — browse, snapshot, replicate, manage
+Exec=zxplore
+Icon=zxplore
+Terminal=false
+Categories=System;Utility;FileTools;
+Keywords=zfs;zpool;snapshot;replicate;storage;
+StartupWMClass=zxplore

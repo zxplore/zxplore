@@ -36,37 +36,52 @@ replicas, the boot environments, and you move them with a keypress.
 
 ## Install
 
-**From a package** (once published):
+**Build from source** — clone → build → install on any OpenZFS host (Linux or
+FreeBSD). The GUI is Go + [Fyne](https://fyne.io) (cgo + OpenGL); `--tui` is a
+pure-terminal fallback that needs no GL.
 
 ```
-sudo apt install zxplore      # Debian / Ubuntu
-sudo dnf install zxplore      # Fedora / RHEL / Rocky
-sudo pacman -S zxplore        # Arch    (or the AUR)
-sudo pkg install zxplore      # FreeBSD
+git clone https://github.com/kldload/zxplore
+cd zxplore
+make               # builds ./zxplore  (CGO_ENABLED=1 go build)
+sudo make install  # installs binary + icon + .desktop
 ```
 
-**From source** (any OpenZFS host):
+Install the build deps for your OS first (full list at the top of the
+[`Makefile`](Makefile)):
 
 ```
-git clone https://github.com/<org>/zxplore
-cd zxplore && sudo make install
+# Fedora / RHEL / Rocky
+sudo dnf install -y golang gcc pkgconf-pkg-config mesa-libGL-devel \
+  libX11-devel libXcursor-devel libXrandr-devel libXinerama-devel \
+  libXi-devel libXxf86vm-devel wayland-devel libxkbcommon-devel fontconfig-devel
+
+# Debian / Ubuntu
+sudo apt-get install -y golang gcc pkg-config libgl1-mesa-dev xorg-dev \
+  libwayland-dev libxkbcommon-dev libfontconfig1-dev
+
+# Arch
+sudo pacman -S --needed go gcc pkgconf libgl libxcursor libxrandr \
+  libxinerama libxi wayland libxkbcommon fontconfig
 ```
 
-Requires `zfs`/`zpool` + `bash`; **recommended**: `fzf` (the interactive
-console), `pv`, `mbuffer` (replication throughput). `python3` for the
-transaction API. See [`packaging/`](packaging/) for the per-platform recipes.
+Runtime needs `zfs`/`zpool`, `libGL`, and an X11 or Wayland session. Snapshot/
+replication over SSH uses the system `ssh` (`sshpass` for one-time key
+authorization); privileged actions elevate with `pkexec`. Headless: `zxplore --tui`.
 
 ## Usage
 
 ```
-zxplore                 # the console — browse; ? for keys, Esc to quit
-zxplore mc <target>     # pinned-target commander (WinSCP-for-ZFS)
-zxplore replicate <dataset@snap> [pool | host:pool]
-zxplore snap <dataset> [name]
+zxplore            # the native GUI console (default)
+zxplore --tui      # terminal UI, for headless / SSH
 ```
 
-Keys: `↵` snapshots · `^s` snap · `^r` replicate · `^o` explore files ·
-`^p` properties · `^d` destroy · `?` help · `Esc` back.
+**Keys:** `F1`/`F2` switch Browser/Transfer · `↑↓` `PgUp`/`PgDn` `Home`/`End`
+move · `Ctrl+F` (or `/`) find · **right-click a dataset** for the full lifecycle
+menu (snapshot / clone / replicate / boot-env / encryption / rollback / destroy)
+· `Enter` or click a snapshot to roll back / clone / hold · `Alt+Q` quit.
+Toolbar: **Servers…** (saved connections — key-first auth, jump hosts),
+**Pools…** (scrub / trim / clear), **Boot Envs…**.
 
 ## Portability
 
