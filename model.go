@@ -135,6 +135,14 @@ func (m *model) reload() {
 func (m *model) refreshDossier() {
 	if m.cursor >= 0 && m.cursor < len(m.datasets) {
 		m.dossier = Dossier(m.host, m.datasets[m.cursor].Name)
+	} else if m.err == "" {
+		// empty but no error — say WHY (no ZFS? no pools?) and the way out,
+		// instead of a blank pane.
+		if wt := WelcomeText(DiagnoseHost(m.host)); wt != "" {
+			m.dossier = wt
+		} else {
+			m.dossier = "(no datasets)"
+		}
 	} else {
 		m.dossier = "(no datasets)"
 	}

@@ -14,7 +14,9 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-func showPoolManager(w fyne.Window) {
+// showPoolManager acts on pools. onChange tells the main window to rescan
+// after something structural (an import) changed what exists.
+func showPoolManager(w fyne.Window, onChange func()) {
 	host := LocalHost()
 	pools, _ := ListPools(host)
 	sel := -1
@@ -26,6 +28,27 @@ func showPoolManager(w fyne.Window) {
 		func(i widget.ListItemID, o fyne.CanvasObject) { o.(*widget.Label).SetText(pools[i]) },
 	)
 	list.OnSelected = func(i widget.ListItemID) { sel = int(i) }
+
+	empty := widget.NewLabelWithStyle(
+		"No pools imported.\n\nScan / Import finds exported pools on this\nmachine's disks (zpool import).",
+		fyne.TextAlignCenter, fyne.TextStyle{})
+	syncEmpty := func() {
+		if len(pools) == 0 {
+			empty.Show()
+		} else {
+			empty.Hide()
+		}
+	}
+	syncEmpty()
+	refreshPools := func() {
+		pools, _ = ListPools(host)
+		if sel >= len(pools) {
+			sel = -1
+		}
+		list.UnselectAll()
+		list.Refresh()
+		syncEmpty()
+	}
 
 	runOp := func(verb string, fn func() error) {
 		go func() {
@@ -79,10 +102,57 @@ func showPoolManager(w fyne.Window) {
 		}()
 	})
 
-	buttons := container.NewHBox(scrubBtn, stopBtn, trimBtn, clearBtn, statusBtn)
+	// Scan / Import: find exported pools on this machine's devices and import
+	// one — the fallback path for "ZFS is here but no pools are imported"
+	// (moved disks, rescue boots). Shows the literal command; runs privileged.
+	var importBtn *widget.Button
+	importBtn = widget.NewButton("Scan / Import…", func() {
+		importBtn.Disable()
+		go func() {
+			names, err := ImportablePools(host)
+			fyne.Do(func() {
+				importBtn.Enable()
+				if err != nil {
+					dialog.ShowError(err, w)
+					return
+				}
+				if len(names) == 0 {
+					dialog.ShowInformation("Import",
+						"No exported pools found on this machine's devices.", w)
+					return
+				}
+				var pd dialog.Dialog
+				box := container.NewVBox(widget.NewLabel("Exported pools found — pick one to import:"))
+				for _, n := range names {
+					n := n
+					box.Add(widget.NewButton("Import  "+n+"   (zpool import "+n+")", func() {
+						pd.Hide()
+						go func() {
+							e := ImportPool(host, n)
+							fyne.Do(func() {
+								if e != nil {
+									dialog.ShowError(e, w)
+									return
+								}
+								dialog.ShowInformation("Import", n+" imported ✓", w)
+								refreshPools()
+								if onChange != nil {
+									onChange()
+								}
+							})
+						}()
+					}))
+				}
+				pd = dialog.NewCustom("Importable pools", "Cancel", box, w)
+				pd.Show()
+			})
+		}()
+	})
+
+	buttons := container.NewHBox(scrubBtn, stopBtn, trimBtn, clearBtn, statusBtn, importBtn)
 	body := container.NewBorder(
 		widget.NewLabelWithStyle("Pools — select one, then act", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		buttons, nil, nil, list)
+		buttons, nil, nil, container.NewStack(list, container.NewCenter(empty)))
 	d := dialog.NewCustom("Pools", "Close", body, w)
 	d.Resize(fyne.NewSize(720, 420))
 	d.Show()

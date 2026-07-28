@@ -59,9 +59,15 @@ func (t compactTheme) Size(name fyne.ThemeSizeName) float32 {
 		return 3 // tight rows (single-spaced list)
 	case theme.SizeNamePadding:
 		return 6 // space between panes / regions
+	case snDossier:
+		return t.Theme.Size(theme.SizeNameText) * 1.25 // dossier reads +25%
 	}
 	return t.Theme.Size(name)
 }
+
+// snDossier is a custom theme size for the dossier/properties pane — resolved
+// to 125% of the base text size so the dense property grid stays readable.
+const snDossier fyne.ThemeSizeName = "zxploreDossier"
 
 func (t compactTheme) Color(name fyne.ThemeColorName, v fyne.ThemeVariant) color.Color {
 	dark := v == theme.VariantDark
@@ -155,7 +161,8 @@ func dossierSegments(text string) []widget.RichTextSegment {
 	// everything stacks vertically); \n segments break lines, preserving the
 	// packed multi-column grid.
 	seg := func(s string, cn fyne.ThemeColorName) *widget.TextSegment {
-		return &widget.TextSegment{Text: s, Style: widget.RichTextStyle{Inline: true, TextStyle: mono, ColorName: cn}}
+		return &widget.TextSegment{Text: s, Style: widget.RichTextStyle{
+			Inline: true, TextStyle: mono, ColorName: cn, SizeName: snDossier}}
 	}
 	var out []widget.RichTextSegment
 	for _, line := range strings.Split(text, "\n") {
@@ -409,8 +416,10 @@ func runGUI() {
 	poolsLabel.TextStyle = fyne.TextStyle{Monospace: true}
 
 	// applyLoad lands a finished scan on the UI thread; reload runs one in the
-	// background (refresh button, post-mutation refreshes).
-	applyLoad := func(rows []Dataset, err error, pools string) {
+	// background (refresh button, post-mutation refreshes). diag explains an
+	// EMPTY result (no ZFS installed / no pools imported) so the browser never
+	// sits there blank — it shows the way out instead.
+	applyLoad := func(rows []Dataset, err error, pools string, diag HostDiagnosis) {
 		all, listErr = rows, err
 		poolsLabel.SetText(pools)
 		if listErr != nil {
@@ -420,12 +429,24 @@ func runGUI() {
 			return
 		}
 		applyFilter(search.Text) // rebuild visible + select row 0
+		if len(all) == 0 && diag != HostOK {
+			renderDossier(WelcomeText(diag))
+		}
+	}
+	// scan gathers everything applyLoad needs, off the UI thread.
+	scan := func() ([]Dataset, error, string, HostDiagnosis) {
+		rows, err := ListDatasets(host)
+		pools := PoolsOverview(host)
+		diag := HostOK
+		if err == nil && len(rows) == 0 {
+			diag = DiagnoseHost(host)
+		}
+		return rows, err, pools, diag
 	}
 	reload := func() {
 		go func() {
-			rows, err := ListDatasets(host)
-			pools := PoolsOverview(host)
-			fyne.Do(func() { applyLoad(rows, err, pools) })
+			rows, err, pools, diag := scan()
+			fyne.Do(func() { applyLoad(rows, err, pools, diag) })
 		}()
 	}
 
@@ -455,7 +476,7 @@ func runGUI() {
 	toolbar := container.NewHBox(
 		widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), reload),
 		widget.NewButton("Servers…", func() { showServerManager(w, func(Server) {}) }),
-		widget.NewButton("Pools…", func() { showPoolManager(w) }),
+		widget.NewButton("Pools…", func() { showPoolManager(w, reload) }),
 	)
 	if IsKldload() {
 		toolbar.Add(widget.NewButton("Boot Envs…", func() { showBootEnvManager(w) }))
@@ -670,12 +691,10 @@ func runGUI() {
 	// First scan: off the UI thread, phase-labelled on the splash, which lifts
 	// once the data lands.
 	go func() {
-		fyne.Do(func() { splashPhase.SetText("listing datasets…") })
-		rows, err := ListDatasets(host)
-		fyne.Do(func() { splashPhase.SetText("reading pool status…") })
-		pools := PoolsOverview(host)
+		fyne.Do(func() { splashPhase.SetText("scanning ZFS…") })
+		rows, err, pools, diag := scan()
 		fyne.Do(func() {
-			applyLoad(rows, err, pools)
+			applyLoad(rows, err, pools, diag)
 			splashBar.Stop()
 			splash.Hide()
 			w.Canvas().Focus(list)

@@ -62,6 +62,13 @@ Right-clicking a dataset opens the lifecycle menu: create child/volume,
 rename, mount, encryption (load/unload/change key, create encrypted),
 snapshot, snapshot explorer, diff, clone, replicate, boot environment,
 rollback, destroy.
+.Pp
+On a host with no imported pools \(em or no ZFS at all \(em the browser
+shows guidance instead of an empty list: how to install OpenZFS, how to
+import or create a pool, or how to connect to a remote ZFS box.
+The pool manager can scan for exported pools
+.Pq Ql zpool import
+and import one.
 .Sh SNAPSHOT EXPLORER
 The explorer fuses the file level with the snapshot level.
 It browses the files of a dataset \(em the live tree, or transparently

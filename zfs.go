@@ -971,6 +971,105 @@ func KldloadTools() []string {
 	return found
 }
 
+// ── empty-host fallback (no ZFS / no pools) ─────────────────────────────────
+
+// HostDiagnosis classifies why a host shows no datasets.
+type HostDiagnosis int
+
+const (
+	HostOK      HostDiagnosis = iota
+	HostNoZFS                 // no zfs CLI on the host at all
+	HostNoPools               // ZFS installed, zero pools imported
+)
+
+// DiagnoseHost explains an empty dataset list: is the ZFS CLI even present,
+// and is any pool imported? Cheap (one lookup + one zpool list).
+func DiagnoseHost(h Host) HostDiagnosis {
+	if h.SSH == "" {
+		if _, err := exec.LookPath("zfs"); err != nil {
+			return HostNoZFS
+		}
+	} else if _, err := run(h.command("sh", "-c", "command -v zfs")); err != nil {
+		return HostNoZFS
+	}
+	if pools, err := ListPools(h); err == nil && len(pools) == 0 {
+		return HostNoPools
+	}
+	return HostOK
+}
+
+// WelcomeText is the guidance rendered instead of a blank browser when a host
+// has nothing to show — it names the reason and the ways out. Plain text with
+// ━━ headers (the GUI colors them; the TUI prints as-is).
+func WelcomeText(diag HostDiagnosis) string {
+	switch diag {
+	case HostNoZFS:
+		return `━━━ OPENZFS NOT FOUND ━━━
+
+  This machine has no zfs command — there is nothing to manage locally.
+
+  Install OpenZFS:
+    Fedora/RHEL     dnf install zfs            (kmod/DKMS — see openzfs docs)
+    Debian/Ubuntu   apt install zfsutils-linux
+    Arch            pacman -S zfs-dkms zfs-utils   (archzfs repo)
+    FreeBSD         built in — kldload zfs
+
+  Or manage a REMOTE ZFS box from this machine:
+    GUI  Servers… → New (key-first auth; passwords never stored)
+    TUI  F3 favorites → add user@host`
+	case HostNoPools:
+		return `━━━ NO POOLS IMPORTED ━━━
+
+  OpenZFS is installed, but no zpool is imported on this host.
+
+  Pools exist but aren't imported (moved disks, rescue boot)?
+    GUI  Pools… → Scan / Import
+    CLI  zpool import            (scan)   →   zpool import <name>
+
+  Create your first pool (⚠ ERASES the target disk):
+    zpool create tank /dev/disk/by-id/<disk>
+  Try zxplore risk-free with a file-backed pool:
+    truncate -s 1G /var/tmp/zx.img && zpool create demo /var/tmp/zx.img
+
+  Or connect to a remote ZFS box: Servers… (GUI) / favorites (TUI).`
+	}
+	return ""
+}
+
+// zpoolAdminOut runs a privileged zpool command and RETURNS stdout (pkexec
+// local / delegated ssh remote) — for root-only reads like the `zpool import`
+// device scan.
+func zpoolAdminOut(h Host, args ...string) (string, error) {
+	if h.SSH == "" {
+		return run(exec.Command("pkexec", append([]string{"zpool"}, args...)...))
+	}
+	return run(h.command("zpool", args...))
+}
+
+// ImportablePools scans for exported/foreign pools (`zpool import` with no
+// pool name — needs root to probe devices) and returns their names.
+// "no pools available to import" is an empty result, not an error.
+func ImportablePools(h Host) ([]string, error) {
+	out, err := zpoolAdminOut(h, "import")
+	if err != nil {
+		if strings.Contains(err.Error(), "no pools available") {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var names []string
+	for _, l := range strings.Split(out, "\n") {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "pool:") {
+			names = append(names, strings.TrimSpace(strings.TrimPrefix(t, "pool:")))
+		}
+	}
+	return names, nil
+}
+
+// ImportPool imports one named pool. The caller confirms first.
+func ImportPool(h Host, name string) error { return zpoolAdmin(h, "import", name) }
+
 // ── audit log ────────────────────────────────────────────────────────────────
 
 // auditLog appends one line per EXECUTED mutating command to
