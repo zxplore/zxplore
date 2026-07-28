@@ -146,6 +146,11 @@ zxplore-tui        # the static terminal binary (same UI)
 man zxplore        # full documentation
 ```
 
+The TUI is a full console, not a fallback — browser, transfer, the snapshot
+file explorer, and pool drill-downs, with a `:` command bar, `/` filter,
+vim keys, and a `?` key overlay. It is **read-only by default**: mutations
+need `:rw` first, and destroys demand retyping the target's name.
+
 **Keys:** `F1`/`F2` switch Browser/Transfer · `Tab` hop between panes · `↑↓`
 `PgUp`/`PgDn` `Home`/`End` move · `Ctrl+F` (or `/`) find · **right-click a
 dataset** for the full lifecycle menu · `Enter` or click a snapshot for

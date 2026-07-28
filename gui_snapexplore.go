@@ -26,22 +26,6 @@ import (
 
 const liveSourceLabel = "(live filesystem)"
 
-// relJoin joins a dataset-relative directory and a name ("" = dataset root).
-func relJoin(rel, name string) string {
-	if rel == "" {
-		return name
-	}
-	return rel + "/" + name
-}
-
-// snapShort returns the part after '@' (or the whole name if no '@').
-func snapShort(snap string) string {
-	if i := strings.IndexByte(snap, '@'); i >= 0 {
-		return snap[i+1:]
-	}
-	return snap
-}
-
 // showSnapshotExplorer opens the explorer window on a dataset. initialSource
 // is "" for the live filesystem, or a snapshot short name to start inside it.
 func showSnapshotExplorer(h Host, dataset, initialSource string) {

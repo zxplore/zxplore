@@ -1396,6 +1396,22 @@ type FileEntry struct {
 	MTime string // coarse, as POSIX `ls -l` prints it (portable Linux/FreeBSD)
 }
 
+// relJoin joins a dataset-relative directory and a name ("" = dataset root).
+func relJoin(rel, name string) string {
+	if rel == "" {
+		return name
+	}
+	return rel + "/" + name
+}
+
+// snapShort returns the part after '@' (or the whole name if no '@').
+func snapShort(snap string) string {
+	if i := strings.IndexByte(snap, '@'); i >= 0 {
+		return snap[i+1:]
+	}
+	return snap
+}
+
 // Mountpoint returns the dataset's mountpoint, erroring clearly when it isn't
 // a browsable path (legacy/none) or isn't mounted.
 func Mountpoint(h Host, dataset string) (string, error) {

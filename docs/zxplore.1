@@ -383,7 +383,34 @@ are driven by plain
 against the boot dataset DERIVED from the pool's
 .Ql bootfs
 property \(em correct regardless of what the environment is named.
-.Sh KEY BINDINGS
+.Sh THE TERMINAL UI
+.Nm Fl -tui
+(and the static
+.Nm zxplore-tui
+binary) is a full console, not a fallback: the browser with live dossier
+(F1), the dual-pane transfer commander (F2), the snapshot file explorer
+(F3 or
+.Ic x
+on a dataset \(em versions across every snapshot, restore as copy or over
+live), and the pools view (F4) with the full drill-down dossier.
+.Ic \&?
+shows every key;
+.Ic :
+opens a command bar
+.Pq Ic :browse , Ic :transfer , Ic :pools , Ic :explore , Ic :connect , Ic :q ;
+.Ic /
+filters the dataset list; movement is arrows or vim keys
+.Pq Ic j k g G , Ic ctrl+d Ns / Ns Ic ctrl+u .
+.Pp
+The TUI is READ-ONLY BY DEFAULT: every mutation \(em snapshot, restore,
+rollback, replicate, pool maintenance \(em requires
+.Ic :rw
+first (the header badge flips from RO to a red RW;
+.Ic :ro
+relocks), and rollback, destroy, and restore-over-live additionally demand
+retyping the target's name.
+Browsing, diffing, and drill-downs never need unlocking.
+.Sh KEY BINDINGS (GUI)
 .Bl -tag -width "PgUp/PgDn, Home/End" -compact
 .It F1 / F2
 switch Browser / Transfer.
