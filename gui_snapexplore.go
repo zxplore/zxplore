@@ -255,6 +255,9 @@ func showSnapshotExplorer(h Host, dataset, initialSource string) {
 
 	// ── actions ──
 	doRestore = func(overwrite bool) {
+		if !guiMutOK(win) {
+			return
+		}
 		if !haveSel || verSel < 0 || verSel >= len(vers) {
 			dialog.ShowInformation("Restore",
 				"Pick a file on the left, then one of its snapshot versions on the right.", win)
@@ -265,17 +268,7 @@ func showSnapshotExplorer(h Host, dataset, initialSource string) {
 		argv, dst := RestoreArgv(mp, v.Snapshot, relPath, v.Dir, overwrite)
 		msg := fmt.Sprintf("Restore  /%s\nfrom snapshot  @%s\n→  %s\n\nRuns exactly (root):\n  %s",
 			relPath, v.Snapshot, dst, strings.Join(argv, " "))
-		if overwrite {
-			if v.Dir {
-				msg += "\n\n⚠ Merges over the live directory — files created since the\nsnapshot survive. Use rollback for a true reset."
-			} else {
-				msg += "\n\n⚠ Overwrites the live file."
-			}
-		}
-		dialog.ShowConfirm("Restore from snapshot", msg, func(ok bool) {
-			if !ok {
-				return
-			}
+		doIt := func() {
 			go func() {
 				err := RestoreFromSnapshot(h, argv)
 				fyne.Do(func() {
@@ -287,6 +280,20 @@ func showSnapshotExplorer(h Host, dataset, initialSource string) {
 					loadDir()
 				})
 			}()
+		}
+		if overwrite {
+			extra := "Overwrites the live file."
+			if v.Dir {
+				extra = "Merges over the live directory — files created since\nthe snapshot survive. Use rollback for a true reset."
+			}
+			// typed confirmation, same policy as every destructive verb
+			confirmTyped(win, "⚠ Restore OVER live", msg+"\n\n"+extra, selEntry.Name, doIt)
+			return
+		}
+		dialog.ShowConfirm("Restore from snapshot", msg, func(ok bool) {
+			if ok {
+				doIt()
+			}
 		}, win)
 	}
 	restoreBtn := widget.NewButtonWithIcon("Restore over live (overwrite)…", theme.HistoryIcon(),

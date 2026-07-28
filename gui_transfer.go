@@ -140,6 +140,9 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 	}
 
 	replicate := func(src, dst *xferPane) {
+		if !guiMutOK(w) {
+			return
+		}
 		s := src.selectedName()
 		if s == "" {
 			dialog.ShowInformation("Replicate", "Select a SOURCE dataset first.", w)

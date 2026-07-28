@@ -55,6 +55,9 @@ func showBootEnvManager(w fyne.Window) {
 	reload()
 
 	runOp := func(verb string, fn func() error) {
+		if !guiMutOK(w) {
+			return
+		}
 		go func() {
 			err := fn()
 			fyne.Do(func() {
@@ -89,12 +92,18 @@ func showBootEnvManager(w fyne.Window) {
 		if snap == "" {
 			return
 		}
-		dialog.ShowConfirm("Roll back",
-			"Roll back the boot dataset to\n  "+snap+"\n\n⚠ takes effect on reboot and destroys newer\nboot environments. Continue?", func(ok bool) {
-				if ok {
-					runOp("rollback", func() error { return RollbackBootEnv(host, snap) })
-				}
-			}, w)
+		if !guiMutOK(w) {
+			return
+		}
+		short := snap
+		if j := strings.IndexByte(short, '@'); j >= 0 {
+			short = short[j+1:]
+		}
+		confirmTyped(w, "⚠ Roll back the BOOT dataset",
+			"Rolls back to\n  "+snap+"\nTakes effect on REBOOT and destroys newer boot environments.",
+			short, func() {
+				runOp("rollback", func() error { return RollbackBootEnv(host, snap) })
+			})
 	})
 	rollbackBtn.Importance = widget.WarningImportance
 	delBtn := widget.NewButton("Delete", func() {
@@ -102,11 +111,17 @@ func showBootEnvManager(w fyne.Window) {
 		if snap == "" {
 			return
 		}
-		dialog.ShowConfirm("Delete", "Delete boot environment\n  "+snap+" ?", func(ok bool) {
-			if ok {
+		if !guiMutOK(w) {
+			return
+		}
+		short := snap
+		if j := strings.IndexByte(short, '@'); j >= 0 {
+			short = short[j+1:]
+		}
+		confirmTyped(w, "✖ Delete boot environment",
+			"Permanently deletes\n  "+snap, short, func() {
 				runOp("delete", func() error { return DeleteBootEnv(host, snap) })
-			}
-		}, w)
+			})
 	})
 	delBtn.Importance = widget.DangerImportance
 

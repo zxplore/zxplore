@@ -158,6 +158,9 @@ actions · `Esc` dismiss · `Alt+Q` quit.
 
 ## Security model
 
+- **Read-only by default, in both UIs** — the TUI unlocks with `:rw`, the GUI
+  with the toolbar lock (red while armed); destroys, rollbacks, and
+  restore-over-live always demand retyping the target's name.
 - Runs **unprivileged, tries unprivileged first** — root and
   [`zfs allow`-delegated](https://openzfs.github.io/openzfs-docs/man/master/8/zfs-allow.8.html)
   users never see a prompt; only a real permission failure retries via

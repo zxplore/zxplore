@@ -40,6 +40,9 @@ func datasetLeaf(dataset string) string {
 func datasetContextMenu(h Host, dataset string, w fyne.Window, refresh, onEdit func()) *fyne.Menu {
 	// runOp runs a privileged op off the UI thread, reports the result, refreshes.
 	runOp := func(verb string, fn func() error) {
+		if !guiMutOK(w) {
+			return
+		}
 		go func() {
 			err := fn()
 			fyne.Do(func() {
@@ -147,12 +150,14 @@ func datasetContextMenu(h Host, dataset string, w fyne.Window, refresh, onEdit f
 			return
 		}
 		snap := snaps[len(snaps)-1].Name
-		dialog.ShowConfirm("Roll back",
-			"Roll back "+dataset+" to\n  "+snap+"\n\n⚠ destroys newer snapshots. Continue?", func(ok bool) {
-				if ok {
-					runOp("rollback", func() error { return Rollback(h, snap) })
-				}
-			}, w)
+		if !guiMutOK(w) {
+			return
+		}
+		confirmTyped(w, "⚠ Roll back "+dataset,
+			"Rolls back to\n  "+snap+"\nand DESTROYS every newer snapshot (and their clones).",
+			dataset, func() {
+				runOp("rollback", func() error { return Rollback(h, snap) })
+			})
 	})
 	edit := fyne.NewMenuItem("Edit properties", func() {
 		if onEdit != nil {
@@ -160,12 +165,14 @@ func datasetContextMenu(h Host, dataset string, w fyne.Window, refresh, onEdit f
 		}
 	})
 	destroy := fyne.NewMenuItem("Destroy…", func() {
-		dialog.ShowConfirm("Destroy",
-			"Permanently destroy  "+dataset+"  (recursively)?", func(ok bool) {
-				if ok {
-					runOp("destroy", func() error { return DestroyDataset(h, dataset) })
-				}
-			}, w)
+		if !guiMutOK(w) {
+			return
+		}
+		confirmTyped(w, "✖ Destroy "+dataset,
+			"Recursively destroys the dataset, its children,\nand every snapshot of them.",
+			dataset, func() {
+				runOp("destroy", func() error { return DestroyDataset(h, dataset) })
+			})
 	})
 
 	newChild := fyne.NewMenuItem("Create child dataset…", func() {

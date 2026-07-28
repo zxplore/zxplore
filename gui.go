@@ -215,6 +215,20 @@ func paneCard(content fyne.CanvasObject) fyne.CanvasObject {
 	return container.NewStack(r, container.NewPadded(content))
 }
 
+// blueAccent retints the primary color inside a ThemeOverride — used to make
+// the ✎ Edit button match the DETAILS pane's blue instead of the brand green.
+type blueAccent struct{ fyne.Theme }
+
+func (t blueAccent) Color(name fyne.ThemeColorName, v fyne.ThemeVariant) color.Color {
+	if name == theme.ColorNamePrimary {
+		if v == theme.VariantDark {
+			return acBlue.dark
+		}
+		return acBlue.light
+	}
+	return t.Theme.Color(name, v)
+}
+
 func variantDark() bool {
 	return fyne.CurrentApp() != nil && fyne.CurrentApp().Settings().ThemeVariant() == theme.VariantDark
 }
@@ -374,6 +388,48 @@ func renderManual() string {
 		}
 	}
 	return string(manPage)
+}
+
+// ── safety: read-only by default (parity with the TUI's :rw) ────────────────
+
+// guiRW gates every mutation. The toolbar lock button flips it; default OFF.
+var guiRW = false
+
+// guiMutOK is checked at the top of every mutation path: in read-only mode it
+// explains and refuses. One chokepoint per surface, same policy as the TUI.
+func guiMutOK(w fyne.Window) bool {
+	if guiRW {
+		return true
+	}
+	dialog.ShowInformation("Read-only",
+		"zxplore is in READ-ONLY mode — browsing, diffing and drill-downs only.\n\n"+
+			"Click the 🔒 button in the toolbar to enable changes\n(it turns red while unlocked).", w)
+	return false
+}
+
+// confirmTyped is the typed-name confirmation for the destructive verbs —
+// same policy as the TUI: retype the target exactly, or nothing happens.
+func confirmTyped(w fyne.Window, title, detail, match string, onOK func()) {
+	e := widget.NewEntry()
+	e.SetPlaceHolder(match)
+	body := container.NewVBox(
+		widget.NewLabel(detail),
+		widget.NewLabel("Type  "+match+"  to confirm:"),
+		e,
+	)
+	d := dialog.NewCustomConfirm(title, "Confirm", "Cancel", body, func(ok bool) {
+		if !ok {
+			return
+		}
+		if strings.TrimSpace(e.Text) != match {
+			dialog.ShowError(fmt.Errorf("name mismatch — expected %q", match), w)
+			return
+		}
+		onOK()
+	}, w)
+	d.Resize(fyne.NewSize(560, 260))
+	d.Show()
+	w.Canvas().Focus(e)
 }
 
 // ── action menu ──────────────────────────────────────────────────────────────
@@ -628,14 +684,32 @@ func runGUI() {
 		heading("ZPOOLS — machine overview", acGold),
 		poolsLabel,
 	)
-	toolbar := container.NewHBox(
+	// The lock: read-only by default, one click to arm changes (red), one to
+	// relock — the GUI twin of the TUI's :rw / :ro.
+	var lockBtn *widget.Button
+	syncLock := func() {
+		if guiRW {
+			lockBtn.SetText("⚠ Read-write")
+			lockBtn.Importance = widget.DangerImportance
+		} else {
+			lockBtn.SetText("🔒 Read-only")
+			lockBtn.Importance = widget.MediumImportance
+		}
+		lockBtn.Refresh()
+	}
+	lockBtn = widget.NewButton("", func() { guiRW = !guiRW; syncLock() })
+
+	toolbarLeft := container.NewHBox(
 		widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), reload),
 		widget.NewButton("Servers…", func() { showServerManager(w, func(Server) {}) }),
 		widget.NewButton("Pools…", func() { showPoolManager(w, reload) }),
-		widget.NewButtonWithIcon("Manual", theme.HelpIcon(), func() { showManual(w) }),
+		lockBtn,
 	)
+	manualBtn := widget.NewButtonWithIcon("Manual", theme.HelpIcon(), func() { showManual(w) })
+	toolbar := container.NewBorder(nil, nil, toolbarLeft, manualBtn)
+	syncLock()
 	if IsKldload() {
-		toolbar.Add(widget.NewButton("Boot Envs…", func() { showBootEnvManager(w) }))
+		toolbarLeft.Add(widget.NewButton("Boot Envs…", func() { showBootEnvManager(w) }))
 	}
 	top := container.NewVBox(titleRow, card(poolsHeader), toolbar)
 
@@ -648,6 +722,7 @@ func runGUI() {
 		return ""
 	}
 	editBtn := widget.NewButton("✎ Edit", nil)
+	editBtn.Importance = widget.HighImportance // accent-filled so it reads as THE action on the pane
 	rightBody := container.NewStack(dossierScroll)
 	var buildRight func()
 	buildRight = func() {
@@ -751,7 +826,8 @@ func runGUI() {
 	list.onSecondary = func(e *fyne.PointEvent) { openDatasetMenu(e.AbsolutePosition) }
 	list.onEnter = func() { openDatasetMenu(fyne.NewPos(300, 220)) }
 
-	rightHead := container.NewBorder(nil, nil, heading("DETAILS", acBlue), editBtn)
+	rightHead := container.NewBorder(nil, nil, heading("DETAILS", acBlue),
+		container.NewThemeOverride(editBtn, blueAccent{compactTheme{theme.DefaultTheme()}}))
 	dossierArea := container.NewBorder(rightHead, nil, nil, nil, rightBody)
 	snapsHead := heading("SNAPSHOTS — Enter or click to roll back / clone / hold", acPurple)
 	snapsArea := container.NewBorder(snapsHead, nil, nil, nil, snapsList)

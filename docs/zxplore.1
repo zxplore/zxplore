@@ -321,6 +321,12 @@ The installed polkit policy
 .Pq Pa org.zxplore.policy
 lets one admin authentication cover a few minutes of commands instead of
 prompting per action.
+.Pp
+Both surfaces are READ-ONLY BY DEFAULT: the TUI unlocks with
+.Ic :rw ,
+the GUI with the toolbar lock button (red while unlocked).
+Rollbacks, destroys, and restore-over-live always demand retyping the
+target's name, in both.
 Encryption passphrases travel on standard input, never on a command line.
 On the remote side, grant a delegated user the needed permissions with
 .Xr zfs-allow 8
@@ -405,6 +411,13 @@ filters the dataset list; movement is arrows or vim keys
 moves focus into the right pane as a property editor: arrows walk the
 settable properties, Enter changes one — enum and on/off properties get the
 same option lists the GUI offers as dropdowns, free-form ones a text input.
+.Ic a
+opens the dataset menu (create child/zvol, rename, mount, encryption,
+destroy);
+.Ic B
+(or
+.Ic :be )
+manages boot environments — create, roll back, delete.
 .Pp
 The TUI is READ-ONLY BY DEFAULT: every mutation \(em snapshot, restore,
 rollback, replicate, pool maintenance \(em requires

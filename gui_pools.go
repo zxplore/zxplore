@@ -51,6 +51,9 @@ func showPoolManager(w fyne.Window, onChange func()) {
 	}
 
 	runOp := func(verb string, fn func() error) {
+		if !guiMutOK(w) {
+			return
+		}
 		go func() {
 			err := fn()
 			fyne.Do(func() {
@@ -116,6 +119,9 @@ func showPoolManager(w fyne.Window, onChange func()) {
 	// (moved disks, rescue boots). Shows the literal command; runs privileged.
 	var importBtn *widget.Button
 	importBtn = widget.NewButton("Scan / Import…", func() {
+		if !guiMutOK(w) {
+			return
+		}
 		importBtn.Disable()
 		go func() {
 			names, err := ImportablePools(host)

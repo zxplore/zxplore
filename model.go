@@ -89,6 +89,8 @@ type model struct {
 	pg         *pager
 	pe         *propEditor // right-pane property editor (Tab in browse)
 	pk         *picker     // enum/bool value picker (the TUI dropdown)
+	dm         *dsMenu     // dataset lifecycle menu ("a")
+	bm         *beMenu     // boot environments (":be" / "B")
 
 	// async generations — stale background results are dropped
 	scanGen  int
@@ -416,6 +418,68 @@ func (m model) dispatch(action string, payload []string, text string) (model, te
 		report("trim started on "+get(0), TrimPool(m.host, get(0)))
 	case "clear":
 		report("errors cleared on "+get(0), ClearPool(m.host, get(0)))
+	case "create-ds":
+		report("created "+get(0)+"/"+text, CreateDataset(m.host, get(0)+"/"+strings.TrimSpace(text), ""))
+		return m, (&m).startScan()
+	case "create-zvol-name":
+		// chain: got the name, now ask the size
+		m.pr = newPrompt(pkInput, "size for "+get(0)+"/"+text,
+			"Volume size (e.g. 10G):", "", "10G", "create-zvol", get(0), strings.TrimSpace(text))
+		return m, nil
+	case "create-zvol":
+		report("created zvol "+get(0)+"/"+get(1), CreateDataset(m.host, get(0)+"/"+get(1), strings.TrimSpace(text)))
+		return m, (&m).startScan()
+	case "rename-ds":
+		report("renamed → "+text, RenameDataset(m.host, get(0), strings.TrimSpace(text)))
+		return m, (&m).startScan()
+	case "mount-ds":
+		report("mounted "+get(0), SetMounted(m.host, get(0), true))
+		return m, (&m).scheduleDossier()
+	case "unmount-ds":
+		report("unmounted "+get(0), SetMounted(m.host, get(0), false))
+		return m, (&m).scheduleDossier()
+	case "loadkey":
+		report("unlocked "+get(0), LoadKey(m.host, get(0), text))
+		return m, (&m).scheduleDossier()
+	case "unloadkey":
+		report("locked "+get(0), UnloadKey(m.host, get(0)))
+		return m, (&m).scheduleDossier()
+	case "changekey":
+		report("passphrase changed on "+get(0), ChangeKey(m.host, get(0), text))
+	case "create-enc-name":
+		m.pr = newSecretPrompt("passphrase for "+get(0)+"/"+text,
+			"Passphrase for the new encrypted dataset:", "create-enc", get(0), strings.TrimSpace(text))
+		return m, nil
+	case "create-enc":
+		report("created encrypted "+get(0)+"/"+get(1), CreateEncrypted(m.host, get(0)+"/"+get(1), text))
+		return m, (&m).startScan()
+	case "destroy-ds":
+		report("destroyed "+get(0), DestroyDataset(m.host, get(0)))
+		return m, (&m).startScan()
+	case "be-create":
+		report("boot environment @"+text, CreateBootEnv(m.host, strings.TrimSpace(text)))
+		if nb, err := newBeMenu(m.host); err == nil {
+			m.bm = nb
+		}
+	case "be-rollback":
+		report("boot dataset rolled back — takes effect on REBOOT", RollbackBootEnv(m.host, get(0)))
+		if nb, err := newBeMenu(m.host); err == nil {
+			m.bm = nb
+		}
+	case "be-delete":
+		report("deleted "+get(0), DeleteBootEnv(m.host, get(0)))
+		if nb, err := newBeMenu(m.host); err == nil {
+			m.bm = nb
+		}
+	case "diff2":
+		from := get(0) + "@" + text
+		to := get(0) + "@" + get(1)
+		rows, err := SnapshotDiff(m.host, from, to)
+		if err != nil {
+			m.status = "✗ diff: " + err.Error()
+			return m, nil
+		}
+		m.pg = newPager("zfs diff "+from+" → @"+get(1), renderDiffText(rows))
 	case "setprop":
 		val := text
 		if val == "" {
@@ -536,6 +600,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.sm != nil {
 			return m.updateSnapMenu(msg)
 		}
+		if m.dm != nil {
+			return m.updateDsMenu(msg)
+		}
+		if m.bm != nil {
+			return m.updateBeMenu(msg)
+		}
 		switch m.mode {
 		case modeFavorites:
 			return m.updateFavorites(msg)
@@ -650,6 +720,17 @@ func (m model) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if d, ok := m.selDataset(); ok {
 			return m.openExplorer(d.Name, ""), nil
 		}
+	case "a":
+		if d, ok := m.selDataset(); ok {
+			m.dm = &dsMenu{ds: d.Name}
+		}
+	case "B":
+		bm, err := newBeMenu(m.host)
+		if err != nil {
+			m.status = "✗ " + err.Error()
+			return m, nil
+		}
+		m.bm = bm
 	case "r":
 		return m, (&m).startScan()
 	case "c":
@@ -668,6 +749,113 @@ func (m model) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				"Name for the snapshot (empty = manual-<timestamp>):", "",
 				"snapshot name", "snapshot-now", d.Name)
 		}
+	}
+	return m, nil
+}
+
+// updateDsMenu drives the dataset lifecycle menu ("a"): create / rename /
+// mount / encryption / destroy. Mutations gate on :rw; destroy is typed.
+func (m model) updateDsMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	dm := m.dm
+	switch msg.String() {
+	case "esc", "q":
+		m.dm = nil
+	case "down", "j":
+		if dm.cursor < len(dsMenuActs)-1 {
+			dm.cursor++
+		}
+	case "up", "k":
+		if dm.cursor > 0 {
+			dm.cursor--
+		}
+	case "enter":
+		ds := dm.ds
+		if !m.requireRW() {
+			return m, nil
+		}
+		m.dm = nil
+		switch dm.cursor {
+		case 0:
+			m.pr = newPrompt(pkInput, "create dataset under "+ds,
+				"Name of the new child:", "", "name", "create-ds", ds)
+		case 1:
+			m.pr = newPrompt(pkInput, "create volume under "+ds,
+				"Name of the new zvol:", "", "name", "create-zvol-name", ds)
+		case 2:
+			pr := newPrompt(pkInput, "rename "+ds, "New full name:", "",
+				ds, "rename-ds", ds)
+			pr.input.SetValue(ds)
+			m.pr = pr
+		case 3:
+			return m.dispatch("mount-ds", []string{ds}, "")
+		case 4:
+			return m.dispatch("unmount-ds", []string{ds}, "")
+		case 5:
+			m.pr = newSecretPrompt("unlock "+ds,
+				"Passphrase (travels on stdin, never argv):", "loadkey", ds)
+		case 6:
+			return m.dispatch("unloadkey", []string{ds}, "")
+		case 7:
+			m.pr = newSecretPrompt("change passphrase for "+ds,
+				"New passphrase:", "changekey", ds)
+		case 8:
+			m.pr = newPrompt(pkInput, "create ENCRYPTED dataset under "+ds,
+				"Name of the new encrypted child:", "", "name", "create-enc-name", ds)
+		case 9:
+			m.pr = newPrompt(pkTyped, "✖ destroy "+ds,
+				"Recursively destroys the dataset, its children,\nand every snapshot of them.",
+				ds, "", "destroy-ds", ds)
+		}
+	}
+	return m, nil
+}
+
+// updateBeMenu drives boot environments: c create, R roll back, D delete.
+func (m model) updateBeMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	bm := m.bm
+	switch msg.String() {
+	case "esc", "q":
+		m.bm = nil
+	case "down", "j":
+		if bm.cursor < len(bm.bes)-1 {
+			bm.cursor++
+		}
+	case "up", "k":
+		if bm.cursor > 0 {
+			bm.cursor--
+		}
+	case "r":
+		if nb, err := newBeMenu(m.host); err == nil {
+			nb.cursor = bm.cursor
+			if nb.cursor >= len(nb.bes) {
+				nb.cursor = len(nb.bes) - 1
+			}
+			m.bm = nb
+		}
+	case "c":
+		if !m.requireRW() {
+			return m, nil
+		}
+		m.pr = newPrompt(pkInput, "create boot environment",
+			"Snapshot of "+bm.bd+" — a restore point for the OS:", "",
+			"be name", "be-create")
+	case "R":
+		be, ok := bm.current()
+		if !ok || !m.requireRW() {
+			return m, nil
+		}
+		short := snapShort(be.Snapshot)
+		m.pr = newPrompt(pkTyped, "⚠ roll back the BOOT dataset",
+			"Rolls "+bm.bd+" back to @"+short+".\nTakes effect on REBOOT and destroys newer boot environments.",
+			short, "", "be-rollback", be.Snapshot)
+	case "D":
+		be, ok := bm.current()
+		if !ok || !m.requireRW() {
+			return m, nil
+		}
+		short := snapShort(be.Snapshot)
+		m.pr = newPrompt(pkTyped, "✖ delete boot environment",
+			"Permanently deletes @"+short+".", short, "", "be-delete", be.Snapshot)
 	}
 	return m, nil
 }
@@ -856,6 +1044,13 @@ func (m model) runCommand(s string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.dispatch("importpool", nil, arg)
+	case "be":
+		bm, err := newBeMenu(m.host)
+		if err != nil {
+			m.status = "✗ " + err.Error()
+			return m, nil
+		}
+		m.bm = bm
 	case "rw":
 		m.rw = true
 		m.status = "⚠ READ-WRITE — mutations enabled (:ro to relock)"
@@ -964,36 +1159,49 @@ func (m model) updateSnapMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.pg = newPager("zfs diff "+s.Name+" → live", renderDiffText(rows))
-		case 2: // clone
+		case 2: // diff against another snapshot — picker of the rest
+			var opts []string
+			for _, o := range sm.snaps {
+				if o.Name != s.Name {
+					opts = append(opts, snapShort(o.Name))
+				}
+			}
+			if len(opts) == 0 {
+				m.status = "no other snapshot to diff against"
+				return m, nil
+			}
+			m.pk = &picker{title: "diff @" + short + " → @?", options: opts,
+				action: "diff2", payload: []string{sm.ds, short}}
+		case 3: // clone
 			if !m.requireRW() {
 				return m, nil
 			}
 			m.pr = newPrompt(pkInput, "clone @"+short, "New dataset name:", "",
 				"pool/new-dataset", "clone", s.Name)
-		case 3: // bookmark
+		case 4: // bookmark
 			if !m.requireRW() {
 				return m, nil
 			}
 			m.pr = newPrompt(pkInput, "bookmark @"+short,
 				"Bookmark name (→ "+sm.ds+"#…):", "", short, "bookmark", s.Name)
-		case 4:
-			if !m.requireRW() {
-				return m, nil
-			}
-			return m.dispatch("hold", []string{s.Name}, "")
 		case 5:
 			if !m.requireRW() {
 				return m, nil
 			}
+			return m.dispatch("hold", []string{s.Name}, "")
+		case 6:
+			if !m.requireRW() {
+				return m, nil
+			}
 			return m.dispatch("release", []string{s.Name}, "")
-		case 6: // rollback — typed confirm on the DATASET name
+		case 7: // rollback — typed confirm on the DATASET name
 			if !m.requireRW() {
 				return m, nil
 			}
 			m.pr = newPrompt(pkTyped, "⚠ roll back "+sm.ds,
 				"Rolls back to @"+short+" and DESTROYS every newer snapshot\n(and their clones).",
 				sm.ds, "", "rollback", s.Name)
-		case 7: // destroy — typed confirm on the snapshot short name
+		case 8: // destroy — typed confirm on the snapshot short name
 			if !m.requireRW() {
 				return m, nil
 			}
@@ -1185,7 +1393,25 @@ func (m model) updatePager(msg tea.KeyMsg) model {
 	if page < 4 {
 		page = 4
 	}
+	if m.pg.filtering {
+		switch msg.String() {
+		case "enter":
+			m.pg.filtering = false
+		case "esc":
+			m.pg.filtering = false
+			m.pg.q = ""
+			m.pg.fin.SetValue("")
+		default:
+			m.pg.fin, _ = m.pg.fin.Update(msg)
+			m.pg.q = m.pg.fin.Value()
+			m.pg.off = 0
+		}
+		return m
+	}
 	switch msg.String() {
+	case "/":
+		m.pg.filtering = true
+		m.pg.fin.Focus()
 	case "q", "esc", "enter":
 		m.pg = nil
 	case "down", "j":
@@ -1319,6 +1545,10 @@ func (m model) View() string {
 		return overlayCenter(m.pk.view(m.width), m.width, m.height)
 	case m.sm != nil:
 		return overlayCenter(m.sm.view(m.width, m.height), m.width, m.height)
+	case m.dm != nil:
+		return overlayCenter(m.dm.view(m.width), m.width, m.height)
+	case m.bm != nil:
+		return overlayCenter(m.bm.view(m.width, m.height), m.width, m.height)
 	case m.cmdActive:
 		return base + "\n" + titleStyle.Render(":") + " " + m.cmdIn.View()
 	}
@@ -1374,7 +1604,7 @@ func (m model) viewBrowse() string {
 	} else if m.filter != "" {
 		filterLine = dimStyle.Render(" /" + m.filter + "  (/ edit · esc clear)")
 	}
-	foot := footerStyle.Render(" ↵ snapshots  tab edit props  x explorer  / filter  s snap  c connect  b bookmark  r reload  F2 transfer F4 pools  : cmd  ? help  q quit")
+	foot := footerStyle.Render(" ↵ snapshots  a dataset actions  tab edit props  x explorer  B boot envs  / filter  s snap  c connect  r reload  F2/F4 : cmd  ? help  q quit")
 	if m.status != "" {
 		foot = okStyle.Render(" "+m.status) + "\n" + foot
 	}

@@ -32,6 +32,9 @@ func snapshotActionDialog(host Host, snap string, w fyne.Window, onDone func()) 
 		ds = snap[:i]
 	}
 	run := func(verb string, fn func() error) {
+		if !guiMutOK(w) {
+			return
+		}
 		go func() {
 			e := fn()
 			fyne.Do(func() {
@@ -46,13 +49,14 @@ func snapshotActionDialog(host Host, snap string, w fyne.Window, onDone func()) 
 	}
 	showActionMenu("@"+short, []menuAction{
 		{"⚠ Roll back to this snapshot…", func() {
-			dialog.ShowConfirm("Roll back",
-				"Roll back to\n  "+snap+"\n\n⚠ This DESTROYS every snapshot newer than this one\n(and their clones). Continue?",
-				func(ok bool) {
-					if ok {
-						run("rolled back", func() error { return Rollback(host, snap) })
-					}
-				}, w)
+			if !guiMutOK(w) {
+				return
+			}
+			confirmTyped(w, "⚠ Roll back "+ds,
+				"Rolls back to @"+short+" and DESTROYS every newer\nsnapshot (and their clones).",
+				ds, func() {
+					run("rolled back", func() error { return Rollback(host, snap) })
+				})
 		}},
 		{"Clone to a new dataset…", func() {
 			e := widget.NewEntry()
@@ -99,12 +103,13 @@ func snapshotActionDialog(host Host, snap string, w fyne.Window, onDone func()) 
 			run("released", func() error { return ReleaseSnap(host, snap) })
 		}},
 		{"✖ Destroy snapshot…", func() {
-			dialog.ShowConfirm("Destroy",
-				"Permanently destroy\n  "+snap+" ?", func(ok bool) {
-					if ok {
-						run("destroyed", func() error { return DestroySnapshot(host, snap) })
-					}
-				}, w)
+			if !guiMutOK(w) {
+				return
+			}
+			confirmTyped(w, "✖ Destroy @"+short,
+				"Permanently destroys this snapshot.", short, func() {
+					run("destroyed", func() error { return DestroySnapshot(host, snap) })
+				})
 		}},
 	}, w)
 }
