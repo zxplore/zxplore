@@ -301,6 +301,51 @@ Useful delegation sets, from least to most trusted:
 .It replication target
 .Ql create,receive,mount
 .El
+.Sh KLDLOAD INTEGRATION
+On a host running the kldload substrate,
+.Nm
+detects the platform (marker files plus which k-commands resolve in
+.Ev PATH )
+and lights up its extras: a green
+.Dq kldload \(em N extra tools
+chip in the header and the
+.Ic Boot Envs
+manager in the toolbar.
+On any other ZFS host none of this appears \(em
+.Nm
+is fully generic and depends on nothing from kldload.
+.Pp
+The ZFS-related k-commands it detects:
+.Bl -tag -width "krecovery" -offset indent -compact
+.It Ic kbe
+boot environments \(em create, list, activate, roll back, delete.
+.It Ic ksnap
+snapshot helper.
+.It Ic kst
+snapshot status.
+.It Ic kclone
+clone a dataset or snapshot.
+.It Ic krecovery
+recovery flow \(em import and roll back a boot environment.
+.It Ic kexport
+export a dataset.
+.It Ic kimage
+image a dataset.
+.It Ic kinspect
+inspect a dataset.
+.It Ic kdf
+ZFS-aware disk free.
+.It Ic kdir
+directory helper.
+.El
+.Pp
+Boot environments in
+.Nm
+are driven by plain
+.Xr zfs 8
+against the boot dataset DERIVED from the pool's
+.Ql bootfs
+property \(em correct regardless of what the environment is named.
 .Sh KEY BINDINGS
 .Bl -tag -width "PgUp/PgDn, Home/End" -compact
 .It F1 / F2

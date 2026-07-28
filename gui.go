@@ -376,84 +376,6 @@ func renderManual() string {
 	return string(manPage)
 }
 
-// ── kldload flare ────────────────────────────────────────────────────────────
-// kldFlare is the green "kldload — N extra tools" chip. Fyne has no native
-// tooltips, so it implements desktop.Hoverable itself: hover (or tap) pops a
-// list of the detected k-commands; leaving hides it.
-type kldFlare struct {
-	widget.BaseWidget
-	text  *canvas.Text
-	tools []string
-	pop   *widget.PopUp
-}
-
-var kToolBlurb = map[string]string{
-	"kbe":       "boot environments",
-	"ksnap":     "snapshot helper",
-	"kst":       "snapshot status",
-	"kclone":    "clone dataset/snapshot",
-	"krecovery": "recovery — roll back a BE",
-	"kexport":   "export a dataset",
-	"kimage":    "image a dataset",
-	"kinspect":  "inspect a dataset",
-	"kdf":       "ZFS-aware disk free",
-	"kdir":      "directory helper",
-}
-
-func newKldFlare(tools []string) *kldFlare {
-	f := &kldFlare{tools: tools}
-	f.text = canvas.NewText(fmt.Sprintf("● kldload — %d extra tools", len(tools)), acGreen.at())
-	f.text.TextStyle = fyne.TextStyle{Bold: true}
-	f.text.TextSize = 13
-	repaint = append(repaint, func() { f.text.Color = acGreen.at(); f.text.Refresh() })
-	f.ExtendBaseWidget(f)
-	return f
-}
-
-func (f *kldFlare) CreateRenderer() fyne.WidgetRenderer { return widget.NewSimpleRenderer(f.text) }
-
-func (f *kldFlare) showTip() {
-	if f.pop != nil {
-		return
-	}
-	cv := fyne.CurrentApp().Driver().CanvasForObject(f)
-	if cv == nil {
-		return
-	}
-	var b strings.Builder
-	b.WriteString("kldload host detected — these k-commands are present:\n")
-	for _, t := range f.tools {
-		if d := kToolBlurb[t]; d != "" {
-			fmt.Fprintf(&b, "\n  %-10s %s", t, d)
-		} else {
-			fmt.Fprintf(&b, "\n  %s", t)
-		}
-	}
-	l := widget.NewLabel(b.String())
-	l.TextStyle = fyne.TextStyle{Monospace: true}
-	pos := fyne.CurrentApp().Driver().AbsolutePositionForObject(f)
-	f.pop = widget.NewPopUp(l, cv)
-	f.pop.ShowAtPosition(fyne.NewPos(pos.X, pos.Y+f.Size().Height+4))
-}
-
-func (f *kldFlare) hideTip() {
-	if f.pop != nil {
-		f.pop.Hide()
-		f.pop = nil
-	}
-}
-
-func (f *kldFlare) MouseIn(*desktop.MouseEvent)    { f.showTip() }
-func (f *kldFlare) MouseMoved(*desktop.MouseEvent) {}
-func (f *kldFlare) MouseOut()                      { f.hideTip() }
-func (f *kldFlare) Tapped(*fyne.PointEvent) {
-	if f.pop != nil {
-		f.hideTip()
-	} else {
-		f.showTip()
-	}
-}
-
 // ── action menu ──────────────────────────────────────────────────────────────
 // menuAction is one row of showActionMenu.
 type menuAction struct {
@@ -637,10 +559,12 @@ func runGUI() {
 	status := widget.NewLabelWithStyle(host.Label(), fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	var leftHead fyne.CanvasObject = status
 	// Flare: on a kldload host, zxplore lights up the extra k-command primitives
-	// (boot envs, etc.) and shows a green chip — hover or tap it to see WHICH
-	// k-commands were detected. Stays fully generic elsewhere.
+	// (boot envs, etc.) and shows a green chip. The k-commands themselves are
+	// listed in the manual ("?"). Stays fully generic elsewhere.
 	if kt := KldloadTools(); len(kt) > 0 {
-		leftHead = container.NewHBox(status, newKldFlare(kt))
+		flare := heading(fmt.Sprintf("● kldload — %d extra tools", len(kt)), acGreen)
+		flare.TextSize = 13
+		leftHead = container.NewHBox(status, flare)
 	}
 	repoU, _ := url.Parse(repoURL)
 	siteU, _ := url.Parse(siteURL)
