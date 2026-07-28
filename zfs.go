@@ -941,6 +941,28 @@ func IsKldload() bool {
 	return false
 }
 
+// zfsKTools are the kldload ZFS "k-commands" zxplore surfaces extra flair for
+// when it detects them. zxplore stays fully generic without them.
+var zfsKTools = []string{
+	"kbe", "ksnap", "kst", "kclone", "krecovery",
+	"kexport", "kimage", "kinspect", "kdf", "kdir",
+}
+
+// KldloadTools returns the kldload ZFS k-commands present on this host (nil on a
+// generic system). Drives the "kldload detected" flare + which extras light up.
+func KldloadTools() []string {
+	if !IsKldload() {
+		return nil
+	}
+	var found []string
+	for _, t := range zfsKTools {
+		if _, err := exec.LookPath(t); err == nil {
+			found = append(found, t)
+		}
+	}
+	return found
+}
+
 // human turns a parseable byte count (`zfs list -p`) into e.g. "4.9G".
 func human(s string) string {
 	n, err := strconv.ParseFloat(s, 64)

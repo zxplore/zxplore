@@ -386,12 +386,16 @@ func runGUI() {
 		applyFilter(search.Text) // rebuild visible + select row 0
 	}
 
-	// ── top: title row (status left, ASCII wordmark right) + pools overview ──
-	badge := ""
-	if IsKldload() {
-		badge = "   •   kldload"
+	// ── top: title row (status + kldload flare left, wordmark right) ──
+	status := widget.NewLabelWithStyle(host.Label(), fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	var leftHead fyne.CanvasObject = status
+	// Flare: on a kldload host, zxplore lights up the extra k-command primitives
+	// (boot envs, etc.) and shows a green chip. Stays fully generic elsewhere.
+	if kt := KldloadTools(); len(kt) > 0 {
+		flare := heading(fmt.Sprintf("● kldload — %d extra tools", len(kt)), acGreen)
+		flare.TextSize = 13
+		leftHead = container.NewHBox(status, flare)
 	}
-	status := widget.NewLabelWithStyle(host.Label()+badge, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	repoU, _ := url.Parse(repoURL)
 	siteU, _ := url.Parse(siteURL)
 	verLink := widget.NewHyperlink("zxplore v"+version, repoU)
@@ -399,7 +403,7 @@ func runGUI() {
 	siteLink := widget.NewHyperlink("powered by kldload.com", siteU)
 	siteLink.Alignment = fyne.TextAlignTrailing
 	wordmark := container.NewVBox(verLink, siteLink)
-	titleRow := container.NewBorder(nil, nil, status, wordmark)
+	titleRow := container.NewBorder(nil, nil, leftHead, wordmark)
 
 	poolsHeader := container.NewVBox(
 		heading("ZPOOLS — machine overview", acGold),
