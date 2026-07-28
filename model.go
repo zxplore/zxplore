@@ -87,6 +87,91 @@ type model struct {
 	exp        *explorer
 	pv         *poolsView
 	pg         *pager
+	pe         *propEditor // right-pane property editor (Tab in browse)
+	pk         *picker     // enum/bool value picker (the TUI dropdown)
+
+	// async generations — stale background results are dropped
+	scanGen  int
+	dossGen  int
+	landPath string // dataset to land on once the post-connect scan arrives
+}
+
+// ── async messages ───────────────────────────────────────────────────────────
+// ZFS enumeration can cost SECONDS (12k snapshots ≈ 7s of kernel time), so
+// NOTHING blocks the Update loop: the dataset list lands fast, snapshot
+// counts and the dossier stream in behind it, and generation counters drop
+// anything the cursor has already moved past.
+
+type datasetsMsg struct {
+	gen  int
+	rows []Dataset
+	err  error
+}
+type countsMsg struct {
+	gen    int
+	counts map[string]int
+}
+type dossierTick struct{ gen int }
+type dossierMsg struct {
+	gen  int
+	text string
+}
+
+// startScan kicks off a background dataset scan (list fast, counts slow).
+func (m *model) startScan() tea.Cmd {
+	m.scanGen++
+	gen := m.scanGen
+	h := m.host
+	m.status = "scanning…"
+	return func() tea.Msg {
+		rows, err := ListDatasets(h)
+		return datasetsMsg{gen: gen, rows: rows, err: err}
+	}
+}
+
+func (m model) fetchCountsCmd(gen int) tea.Cmd {
+	h := m.host
+	return func() tea.Msg {
+		counts, _ := SnapshotCounts(h)
+		return countsMsg{gen: gen, counts: counts}
+	}
+}
+
+// scheduleDossier debounces dossier fetches: cursor moves just bump the
+// generation; the fetch fires only after 120ms of stillness.
+func (m *model) scheduleDossier() tea.Cmd {
+	m.dossGen++
+	gen := m.dossGen
+	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg { return dossierTick{gen} })
+}
+
+func (m model) fetchDossierCmd(gen int) tea.Cmd {
+	h, cols := m.host, m.dossCols
+	name := ""
+	if d, ok := m.selDataset(); ok {
+		name = d.Name
+	}
+	hadErr := m.err != ""
+	return func() tea.Msg {
+		switch {
+		case name != "":
+			return dossierMsg{gen: gen, text: DossierCols(h, name, cols)}
+		case hadErr:
+			return dossierMsg{gen: gen, text: "(no datasets)"}
+		default:
+			if wt := WelcomeText(DiagnoseHost(h)); wt != "" {
+				return dossierMsg{gen: gen, text: wt}
+			}
+			return dossierMsg{gen: gen, text: "(no datasets)"}
+		}
+	}
+}
+
+// platformMsg refreshes the header chip after a connect (remote lookups are
+// several ssh round-trips — never inline).
+type platformMsg struct {
+	gen  int
+	text string
 }
 
 func newModel() model {
@@ -105,7 +190,9 @@ func newModel() model {
 	m := model{host: LocalHost(), kldload: IsKldload(), input: ti, filterIn: fi, cmdIn: ci,
 		connectPane: -1, dossCols: 1}
 	m.platform = HostPlatform(m.host)
-	m.reload()
+	m.dossier = "…"
+	m.scanGen = 1 // Init()'s scan carries this generation
+	m.status = "scanning…"
 	return m
 }
 
@@ -157,16 +244,15 @@ func (m model) dossierColsFor() int {
 	return c
 }
 
-func (m *model) reload() {
-	ds, err := ListDatasets(m.host)
-	m.datasets = ds
-	if err != nil {
-		m.err = err.Error()
-	} else {
-		m.err = ""
+// Init fires the first scan. newModel pre-set scanGen/status for it — Init
+// cannot mutate the model (bubbletea only keeps its returned Cmd).
+func (m model) Init() tea.Cmd {
+	h := m.host
+	gen := m.scanGen
+	return func() tea.Msg {
+		rows, err := ListDatasets(h)
+		return datasetsMsg{gen: gen, rows: rows, err: err}
 	}
-	m.clampCursor()
-	m.refreshDossier()
 }
 
 func (m *model) clampCursor() {
@@ -176,20 +262,6 @@ func (m *model) clampCursor() {
 	}
 	if m.cursor < 0 {
 		m.cursor = 0
-	}
-}
-
-func (m *model) refreshDossier() {
-	if d, ok := m.selDataset(); ok {
-		m.dossier = DossierCols(m.host, d.Name, m.dossCols)
-	} else if m.err == "" {
-		if wt := WelcomeText(DiagnoseHost(m.host)); wt != "" {
-			m.dossier = wt
-		} else {
-			m.dossier = "(no datasets)"
-		}
-	} else {
-		m.dossier = "(no datasets)"
 	}
 }
 
@@ -204,32 +276,24 @@ func (m *model) requireRW() bool {
 }
 
 // connect re-homes the browser at a favorite's host + lands on its path.
-func (m model) connect(f Favorite) model {
+// Everything network-ish happens in background cmds.
+func (m model) connect(f Favorite) (model, tea.Cmd) {
 	m.host = f.Host()
-	m.platform = HostPlatform(m.host)
+	m.platform = ""
 	m.cursor = 0
 	m.filter = ""
-	m.reload()
-	if f.Path != "" {
-		for i, d := range m.fds() {
-			if d.Name == f.Path {
-				m.cursor = i
-				break
-			}
-		}
-		m.refreshDossier()
-	}
-	if m.err != "" {
-		m.status = "✗ " + m.host.Label() + ": " + m.err
-	} else {
-		m.status = "connected: " + f.Target()
-	}
-	return m
+	m.landPath = f.Path
+	m.status = "connecting " + f.Target() + "…"
+	scan := (&m).startScan()
+	gen := m.scanGen
+	h := m.host
+	plat := func() tea.Msg { return platformMsg{gen: gen, text: HostPlatform(h)} }
+	return m, tea.Batch(scan, plat)
 }
 
 // applyConnect applies a chosen favorite/target: to a commander pane if we
 // entered connect from the commander, else to the browser itself.
-func (m model) applyConnect(f Favorite) model {
+func (m model) applyConnect(f Favorite) (model, tea.Cmd) {
 	if m.connectPane == 0 || m.connectPane == 1 {
 		p := &m.cmdr.panes[m.connectPane]
 		p.host = f.Host()
@@ -243,7 +307,7 @@ func (m model) applyConnect(f Favorite) model {
 		}
 		m.connectPane = -1
 		m.mode = modeTransfer
-		return m
+		return m, nil
 	}
 	m.mode = modeBrowse
 	return m.connect(f)
@@ -296,8 +360,6 @@ func (m model) openSnapMenu(ds string) model {
 	return m
 }
 
-func (m model) Init() tea.Cmd { return nil }
-
 // ── dispatch: every mutation funnels through here ───────────────────────────
 
 func (m model) dispatch(action string, payload []string, text string) (model, tea.Cmd) {
@@ -322,13 +384,13 @@ func (m model) dispatch(action string, payload []string, text string) (model, te
 		}
 		snap, err := SnapshotNow(m.host, get(0), name)
 		report("snapshot "+snap, err)
-		m.reload()
+		return m, (&m).startScan()
 	case "rollback":
 		report("rolled back to "+get(0), Rollback(m.host, get(0)))
-		m.reload()
+		return m, (&m).startScan()
 	case "clone":
 		report("cloned → "+text, Clone(m.host, get(0), strings.TrimSpace(text)))
-		m.reload()
+		return m, (&m).startScan()
 	case "bookmark":
 		report("bookmarked #"+text, CreateBookmark(m.host, get(0), strings.TrimSpace(text)))
 	case "hold":
@@ -354,12 +416,22 @@ func (m model) dispatch(action string, payload []string, text string) (model, te
 		report("trim started on "+get(0), TrimPool(m.host, get(0)))
 	case "clear":
 		report("errors cleared on "+get(0), ClearPool(m.host, get(0)))
+	case "setprop":
+		val := text
+		if val == "" {
+			val = get(2)
+		}
+		report("set "+get(1)+"="+val+" on "+get(0), SetProp(m.host, get(0), get(1), val))
+		if m.pe != nil && m.pe.ds == get(0) {
+			m.pe.refresh(m.host)
+		}
+		return m, (&m).scheduleDossier()
 	case "importpool":
 		report("imported "+text, ImportPool(m.host, strings.TrimSpace(text)))
 		if m.pv != nil {
 			m.pv.reload()
 		}
-		m.reload()
+		return m, (&m).startScan()
 	}
 	return m, nil
 }
@@ -372,7 +444,58 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		if c := m.dossierColsFor(); c != m.dossCols {
 			m.dossCols = c
-			m.refreshDossier()
+			return m, (&m).scheduleDossier()
+		}
+		return m, nil
+	case datasetsMsg:
+		if msg.gen != m.scanGen {
+			return m, nil
+		}
+		m.datasets = msg.rows
+		if msg.err != nil {
+			m.err = msg.err.Error()
+			m.status = "✗ " + m.err
+		} else {
+			m.err = ""
+			m.status = ""
+		}
+		if m.landPath != "" {
+			for i, d := range m.fds() {
+				if d.Name == m.landPath {
+					m.cursor = i
+					break
+				}
+			}
+			m.landPath = ""
+			m.status = "connected: " + m.host.Label()
+		}
+		m.clampCursor()
+		return m, tea.Batch(m.fetchCountsCmd(msg.gen), (&m).scheduleDossier())
+	case countsMsg:
+		if msg.gen != m.scanGen || msg.counts == nil {
+			return m, nil
+		}
+		for i := range m.datasets {
+			if c, ok := msg.counts[m.datasets[i].Name]; ok {
+				m.datasets[i].Snaps = c
+			} else {
+				m.datasets[i].Snaps = 0
+			}
+		}
+		return m, nil
+	case dossierTick:
+		if msg.gen != m.dossGen {
+			return m, nil
+		}
+		return m, m.fetchDossierCmd(msg.gen)
+	case dossierMsg:
+		if msg.gen == m.dossGen {
+			m.dossier = msg.text
+		}
+		return m, nil
+	case platformMsg:
+		if msg.gen == m.scanGen {
+			m.platform = msg.text
 		}
 		return m, nil
 	case replicateDoneMsg:
@@ -400,18 +523,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.pr != nil {
 			return m.updatePrompt(msg)
 		}
+		if m.pk != nil {
+			return m.updatePicker(msg)
+		}
 		if m.cmdActive {
 			return m.updateCommand(msg)
 		}
 		if m.filterEdit {
-			return m.updateFilter(msg), nil
+			mm, cmd := m.updateFilter(msg)
+			return mm, cmd
 		}
 		if m.sm != nil {
 			return m.updateSnapMenu(msg)
 		}
 		switch m.mode {
 		case modeFavorites:
-			return m.updateFavorites(msg), nil
+			return m.updateFavorites(msg)
 		case modeConnect:
 			return m.updateConnect(msg)
 		case modeTransfer:
@@ -440,8 +567,7 @@ func (m model) global(k string) (model, tea.Cmd, bool) {
 		return m, nil, true
 	case "f1":
 		m.mode = modeBrowse
-		m.reload()
-		return m, nil, true
+		return m, (&m).startScan(), true
 	case "f2":
 		if len(m.cmdr.panes[0].entries) == 0 {
 			m.cmdr = newCommander(m.host, "")
@@ -469,34 +595,48 @@ func (m model) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if page < 4 {
 		page = 4
 	}
+	// right pane focused → the property editor owns movement + Enter
+	if m.pe != nil {
+		return m.updatePropEdit(msg)
+	}
 	switch msg.String() {
 	case "q", "esc":
 		return m, tea.Quit
+	case "tab":
+		if d, ok := m.selDataset(); ok {
+			pe, err := newPropEditor(m.host, d.Name)
+			if err != nil {
+				m.status = "✗ " + err.Error()
+				return m, nil
+			}
+			m.pe = pe
+			m.status = "editing properties — ↵ change · tab/esc back to the list"
+		}
 	case "down", "j":
 		if m.cursor < len(m.fds())-1 {
 			m.cursor++
-			m.refreshDossier()
+			return m, (&m).scheduleDossier()
 		}
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
-			m.refreshDossier()
+			return m, (&m).scheduleDossier()
 		}
 	case "ctrl+d":
 		m.cursor += page
 		m.clampCursor()
-		m.refreshDossier()
+		return m, (&m).scheduleDossier()
 	case "ctrl+u":
 		m.cursor -= page
 		m.clampCursor()
-		m.refreshDossier()
+		return m, (&m).scheduleDossier()
 	case "g", "home":
 		m.cursor = 0
-		m.refreshDossier()
+		return m, (&m).scheduleDossier()
 	case "G", "end":
 		if n := len(m.fds()); n > 0 {
 			m.cursor = n - 1
-			m.refreshDossier()
+			return m, (&m).scheduleDossier()
 		}
 	case "/":
 		m.filterIn.SetValue(m.filter)
@@ -511,8 +651,7 @@ func (m model) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.openExplorer(d.Name, ""), nil
 		}
 	case "r":
-		m.reload()
-		m.status = "reloaded"
+		return m, (&m).startScan()
 	case "c":
 		m.connectPane = -1
 		m.favorites = LoadFavorites()
@@ -533,17 +672,100 @@ func (m model) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) updateFilter(msg tea.KeyMsg) model {
+// updatePropEdit drives the right-pane property editor (Tab in browse):
+// arrows walk the settable properties, Enter edits with the GUI's option
+// lists, tab/esc return to the dataset list.
+func (m model) updatePropEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	pe := m.pe
+	switch msg.String() {
+	case "tab", "esc", "q", "h":
+		m.pe = nil
+		m.status = ""
+	case "down", "j":
+		pe.move(1)
+	case "up", "k":
+		pe.move(-1)
+	case "g":
+		pe.cursor = pe.firstSelectable()
+	case "G":
+		pe.cursor = len(pe.rows) - 1
+		if pe.rows[pe.cursor].header != "" {
+			pe.move(-1)
+		}
+	case "?":
+		m.helpOn = true
+	case "enter":
+		p, ok := pe.current()
+		if !ok {
+			return m, nil
+		}
+		if !m.requireRW() {
+			return m, nil
+		}
+		switch p.Control.Kind {
+		case "bool", "enum":
+			cur := 0
+			for i, o := range p.Control.Options {
+				if o == p.Value {
+					cur = i
+				}
+			}
+			m.pk = &picker{title: p.Name + " = ?  (now " + p.Value + ")",
+				options: p.Control.Options, cursor: cur,
+				action: "setprop", payload: []string{pe.ds, p.Name}}
+		default:
+			pr := newPrompt(pkInput, "set "+p.Name+" on "+pe.ds,
+				"Current: "+p.Value+"  ("+p.Source+")", "", p.Value,
+				"setprop", pe.ds, p.Name)
+			pr.input.SetValue(p.Value)
+			m.pr = pr
+		}
+	}
+	return m, nil
+}
+
+// updatePicker drives the enum/bool value picker. Risky properties detour
+// through a y/n confirm carrying the chosen value in the payload.
+func (m model) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	pk := m.pk
+	switch msg.String() {
+	case "esc", "q":
+		m.pk = nil
+		m.status = "cancelled"
+	case "down", "j":
+		if pk.cursor < len(pk.options)-1 {
+			pk.cursor++
+		}
+	case "up", "k":
+		if pk.cursor > 0 {
+			pk.cursor--
+		}
+	case "enter":
+		choice := pk.options[pk.cursor]
+		action, payload := pk.action, pk.payload
+		m.pk = nil
+		if action == "setprop" && len(payload) >= 2 && riskyProps[payload[1]] {
+			m.pr = newPrompt(pkConfirm, "⚠ set "+payload[1]+" = "+choice,
+				"On "+payload[0]+" — this can unmount data, break boot,\nor hide a filesystem. Apply?",
+				"", "", "setprop", payload[0], payload[1], choice)
+			return m, nil
+		}
+		return m.dispatch(action, payload, choice)
+	}
+	return m, nil
+}
+
+func (m model) updateFilter(msg tea.KeyMsg) (model, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
 		m.filterEdit = false
-		m.refreshDossier()
+		return m, (&m).scheduleDossier()
 	case "esc":
 		m.filterEdit = false
 		m.filter = ""
 		m.filterIn.SetValue("")
 		m.clampCursor()
-		m.refreshDossier()
+		return m, (&m).scheduleDossier()
 	default:
 		var cmd tea.Cmd
 		m.filterIn, cmd = m.filterIn.Update(msg)
@@ -551,7 +773,7 @@ func (m model) updateFilter(msg tea.KeyMsg) model {
 		m.filter = m.filterIn.Value()
 		m.cursor = 0
 	}
-	return m
+	return m, nil
 }
 
 func (m model) updateCommand(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -586,7 +808,7 @@ func (m model) runCommand(s string) (tea.Model, tea.Cmd) {
 		m.helpOn = true
 	case "browse", "files":
 		m.mode = modeBrowse
-		m.reload()
+		return m, (&m).startScan()
 	case "transfer":
 		if len(m.cmdr.panes[0].entries) == 0 {
 			m.cmdr = newCommander(m.host, "")
@@ -623,7 +845,8 @@ func (m model) runCommand(s string) (tea.Model, tea.Cmd) {
 		fav := ParseTarget(arg)
 		m.favorites = AddFavorite(LoadFavorites(), fav)
 		_ = SaveFavorites(m.favorites)
-		return m.applyConnect(fav), nil
+		mm, cmd := m.applyConnect(fav)
+		return mm, cmd
 	case "importpool":
 		if !m.requireRW() {
 			return m, nil
@@ -640,8 +863,7 @@ func (m model) runCommand(s string) (tea.Model, tea.Cmd) {
 		m.rw = false
 		m.status = "read-only locked"
 	case "refresh":
-		m.reload()
-		m.status = "reloaded"
+		return m, (&m).startScan()
 	default:
 		m.status = "unknown command: " + f[0] + "   (:help)"
 	}
@@ -674,6 +896,13 @@ func (m model) updatePrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.pr = nil
+			if p.kind == pkInput && p.action == "setprop" &&
+				len(p.payload) >= 2 && riskyProps[p.payload[1]] {
+				m.pr = newPrompt(pkConfirm, "⚠ set "+p.payload[1]+" = "+v,
+					"On "+p.payload[0]+" — this can unmount data, break boot,\nor hide a filesystem. Apply?",
+					"", "", "setprop", p.payload[0], p.payload[1], v)
+				return m, nil
+			}
 			return m.dispatch(p.action, p.payload, v)
 		default:
 			var cmd tea.Cmd
@@ -801,7 +1030,6 @@ func (m model) updateExplorer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "q":
 		m.exp = nil
 		m.mode = modeBrowse
-		m.reload()
 	case "tab":
 		if len(e.vers) > 0 {
 			e.focus = 1 - e.focus
@@ -907,7 +1135,6 @@ func (m model) updatePools(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "q":
 		m.mode = modeBrowse
-		m.reload()
 	case "down", "j":
 		if p.cursor < len(p.names)-1 {
 			p.cursor++
@@ -987,7 +1214,6 @@ func (m model) updateTransfer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.mode = modeBrowse
-		m.reload()
 		return m, nil
 	case "c":
 		m.connectPane = m.cmdr.active
@@ -1008,10 +1234,10 @@ func (m model) updateTransfer(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m model) updateFavorites(msg tea.KeyMsg) model {
+func (m model) updateFavorites(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "c", "q":
-		return m.cancelConnect()
+		return m.cancelConnect(), nil
 	case "down", "j":
 		if m.favCursor < len(m.favorites)-1 {
 			m.favCursor++
@@ -1037,7 +1263,7 @@ func (m model) updateFavorites(msg tea.KeyMsg) model {
 			return m.applyConnect(m.favorites[m.favCursor])
 		}
 	}
-	return m
+	return m, nil
 }
 
 func (m model) updateConnect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1050,7 +1276,8 @@ func (m model) updateConnect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			f := ParseTarget(v)
 			m.favorites = AddFavorite(LoadFavorites(), f)
 			_ = SaveFavorites(m.favorites)
-			return m.applyConnect(f), nil
+			mm, cmd := m.applyConnect(f)
+			return mm, cmd
 		}
 		return m.cancelConnect(), nil
 	default:
@@ -1088,6 +1315,8 @@ func (m model) View() string {
 		return helpView(m.width, m.height)
 	case m.pr != nil:
 		return overlayCenter(m.pr.view(m.width), m.width, m.height)
+	case m.pk != nil:
+		return overlayCenter(m.pk.view(m.width), m.width, m.height)
 	case m.sm != nil:
 		return overlayCenter(m.sm.view(m.width, m.height), m.width, m.height)
 	case m.cmdActive:
@@ -1129,8 +1358,14 @@ func (m model) viewBrowse() string {
 	if rightW < 12 {
 		rightW = 12
 	}
-	left := paneFocus.Width(leftW).Height(bodyH).Render(m.renderList(leftW, bodyH))
-	right := paneStyle.Width(rightW).Height(bodyH).Render(m.renderDossier(rightW-2, bodyH))
+	leftSt, rightSt := paneFocus, paneStyle
+	rightBody := m.renderDossier(rightW-2, bodyH)
+	if m.pe != nil {
+		leftSt, rightSt = paneStyle, paneFocus
+		rightBody = m.pe.view(rightW-2, bodyH)
+	}
+	left := leftSt.Width(leftW).Height(bodyH).Render(m.renderList(leftW, bodyH))
+	right := rightSt.Width(rightW).Height(bodyH).Render(rightBody)
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
 	filterLine := ""
@@ -1139,7 +1374,7 @@ func (m model) viewBrowse() string {
 	} else if m.filter != "" {
 		filterLine = dimStyle.Render(" /" + m.filter + "  (/ edit · esc clear)")
 	}
-	foot := footerStyle.Render(" ↵ snapshots  x explorer  / filter  s snap  c connect  b bookmark  r reload   F2 transfer F4 pools  : cmd  ? help  q quit")
+	foot := footerStyle.Render(" ↵ snapshots  tab edit props  x explorer  / filter  s snap  c connect  b bookmark  r reload  F2 transfer F4 pools  : cmd  ? help  q quit")
 	if m.status != "" {
 		foot = okStyle.Render(" "+m.status) + "\n" + foot
 	}
@@ -1214,7 +1449,10 @@ func (m model) renderList(w, h int) string {
 	var b strings.Builder
 	for i := top; i < end; i++ {
 		d := ds[i]
-		meta := fmt.Sprintf("%s/%s ×%d", d.Used, d.Refer, d.Snaps)
+		meta := fmt.Sprintf("%s/%s", d.Used, d.Refer)
+		if d.Snaps >= 0 {
+			meta += fmt.Sprintf(" ×%d", d.Snaps)
+		}
 		nameW := w - lipgloss.Width(meta) - 1
 		if nameW < 4 {
 			nameW = 4

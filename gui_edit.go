@@ -109,14 +109,6 @@ func snapshotActionDialog(host Host, snap string, w fyne.Window, onDone func()) 
 	}, w)
 }
 
-// riskyProps confirm before applying — a stray toggle here can unmount data,
-// break boot, or hide a filesystem.
-var riskyProps = map[string]bool{
-	"mountpoint": true, "canmount": true, "readonly": true,
-	"quota": true, "refquota": true, "reservation": true, "refreservation": true,
-	"sharenfs": true, "sharesmb": true,
-}
-
 // buildEditForm renders the settable properties of a dataset as live controls,
 // grouped like the dossier. onApplied runs after any apply attempt (success,
 // failure, or cancel) so the caller can rebuild the form and re-sync controls to

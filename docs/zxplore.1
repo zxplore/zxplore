@@ -401,6 +401,10 @@ opens a command bar
 .Ic /
 filters the dataset list; movement is arrows or vim keys
 .Pq Ic j k g G , Ic ctrl+d Ns / Ns Ic ctrl+u .
+.Ic Tab
+moves focus into the right pane as a property editor: arrows walk the
+settable properties, Enter changes one — enum and on/off properties get the
+same option lists the GUI offers as dropdowns, free-form ones a text input.
 .Pp
 The TUI is READ-ONLY BY DEFAULT: every mutation \(em snapshot, restore,
 rollback, replicate, pool maintenance \(em requires

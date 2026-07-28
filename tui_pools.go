@@ -12,10 +12,11 @@ import (
 )
 
 type poolsView struct {
-	host   Host
-	names  []string
-	cursor int
-	status string
+	host     Host
+	names    []string
+	cursor   int
+	status   string
+	overview string // cached — PoolsOverview costs zpool calls, never per frame
 }
 
 func newPoolsView(h Host) *poolsView {
@@ -38,6 +39,7 @@ func (p *poolsView) reload() {
 	} else {
 		p.status = fmt.Sprintf("%d pools", len(names))
 	}
+	p.overview = strings.TrimRight(PoolsOverview(p.host), "\n")
 }
 
 func (p *poolsView) current() (string, bool) {
@@ -64,7 +66,7 @@ func (p *poolsView) view(width, height int) string {
 		}
 		b.WriteString(line + "\n")
 	}
-	b.WriteString("\n" + dimStyle.Render(strings.TrimRight(PoolsOverview(p.host), "\n")))
+	b.WriteString("\n" + dimStyle.Render(p.overview))
 	body := paneFocus.Width(width - 2).Height(bodyH).Render(b.String())
 	status := footerStyle.Render(" " + truncate(p.status, width-2))
 	return lipgloss.JoinVertical(lipgloss.Left, body, status)

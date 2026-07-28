@@ -483,7 +483,11 @@ func runGUI() {
 		func() fyne.CanvasObject { return widget.NewLabel("template") },
 		func(i widget.ListItemID, o fyne.CanvasObject) {
 			d := visible[i]
-			o.(*widget.Label).SetText(fmt.Sprintf("%s    %s / %s   ×%d", d.Name, d.Used, d.Refer, d.Snaps))
+			snaps := "" // counts stream in behind the fast list (Snaps<0 = not yet)
+			if d.Snaps >= 0 {
+				snaps = fmt.Sprintf("   ×%d", d.Snaps)
+			}
+			o.(*widget.Label).SetText(fmt.Sprintf("%s    %s / %s%s", d.Name, d.Used, d.Refer, snaps))
 		},
 	)
 	// OnHighlighted (↑/↓ and hover) forwards into Select so the blue bar itself
@@ -548,10 +552,50 @@ func runGUI() {
 		}
 		return rows, err, pools, diag
 	}
+	// Snapshot counts are the expensive part (seconds of kernel time with
+	// thousands of snapshots) — they stream in AFTER the list paints, and a
+	// stale scan's counts are dropped.
+	scanGen := 0
+	loadCounts := func(gen int) {
+		go func() {
+			counts, err := SnapshotCounts(host)
+			if err != nil || counts == nil {
+				return
+			}
+			fyne.Do(func() {
+				if gen != scanGen {
+					return
+				}
+				for i := range all {
+					if c, ok := counts[all[i].Name]; ok {
+						all[i].Snaps = c
+					} else {
+						all[i].Snaps = 0
+					}
+				}
+				for i := range visible {
+					if c, ok := counts[visible[i].Name]; ok {
+						visible[i].Snaps = c
+					} else {
+						visible[i].Snaps = 0
+					}
+				}
+				list.Refresh()
+			})
+		}()
+	}
 	reload := func() {
+		scanGen++
+		gen := scanGen
 		go func() {
 			rows, err, pools, diag := scan()
-			fyne.Do(func() { applyLoad(rows, err, pools, diag) })
+			fyne.Do(func() {
+				if gen != scanGen {
+					return
+				}
+				applyLoad(rows, err, pools, diag)
+				loadCounts(gen)
+			})
 		}()
 	}
 
@@ -812,6 +856,8 @@ func runGUI() {
 
 	// First scan: off the UI thread, phase-labelled on the splash, which lifts
 	// once the data lands.
+	scanGen++
+	firstGen := scanGen
 	go func() {
 		fyne.Do(func() { splashPhase.SetText("scanning ZFS…") })
 		plat := HostPlatform(host)
@@ -825,6 +871,7 @@ func runGUI() {
 			splashBar.Stop()
 			splash.Hide()
 			w.Canvas().Focus(list)
+			loadCounts(firstGen)
 		})
 	}()
 

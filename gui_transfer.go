@@ -44,7 +44,11 @@ func newXferPane(side string, switchTab func(fyne.KeyName)) *xferPane {
 		func() fyne.CanvasObject { return widget.NewLabel("t") },
 		func(i widget.ListItemID, o fyne.CanvasObject) {
 			d := p.datasets[i]
-			o.(*widget.Label).SetText(fmt.Sprintf("%s   %s/%s  ×%d", d.Name, d.Used, d.Refer, d.Snaps))
+			snaps := ""
+			if d.Snaps >= 0 {
+				snaps = fmt.Sprintf("  ×%d", d.Snaps)
+			}
+			o.(*widget.Label).SetText(fmt.Sprintf("%s   %s/%s%s", d.Name, d.Used, d.Refer, snaps))
 		},
 	)
 	p.list.onFunc = switchTab // F1/F2 switch tabs even when a pane is focused

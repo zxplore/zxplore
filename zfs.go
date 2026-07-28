@@ -104,7 +104,11 @@ func run(cmd *exec.Cmd) (string, error) {
 	return out.String(), nil
 }
 
-// ListDatasets lists all filesystems + volumes at a host, with snapshot counts.
+// ListDatasets lists all filesystems + volumes at a host — FAST (one zfs
+// call, ~100ms even on big boxes). Snapshot counts are NOT included: with
+// 12k+ snapshots, `zfs list -t snapshot` costs SECONDS of kernel time, so
+// counts load separately via SnapshotCounts and merge in when ready.
+// Snaps == -1 means "not counted yet" — UIs hide it rather than lie with 0.
 func ListDatasets(h Host) ([]Dataset, error) {
 	out, err := run(h.command("zfs",
 		"list", "-H", "-p", "-o", "name,used,refer", "-t", "filesystem,volume"))
@@ -120,21 +124,26 @@ func ListDatasets(h Host) ([]Dataset, error) {
 		if len(f) < 3 {
 			continue
 		}
-		rows = append(rows, Dataset{Name: f[0], Used: human(f[1]), Refer: human(f[2])})
-	}
-	// Snapshot counts in one pass.
-	if snapOut, err := run(h.command("zfs",
-		"list", "-H", "-o", "name", "-t", "snapshot")); err == nil {
-		for i := range rows {
-			prefix := rows[i].Name + "@"
-			for _, s := range strings.Split(snapOut, "\n") {
-				if strings.HasPrefix(s, prefix) {
-					rows[i].Snaps++
-				}
-			}
-		}
+		rows = append(rows, Dataset{Name: f[0], Used: human(f[1]), Refer: human(f[2]), Snaps: -1})
 	}
 	return rows, nil
+}
+
+// SnapshotCounts enumerates every snapshot at the host and counts per
+// dataset in one pass. THE expensive call (seconds of kernel time on hosts
+// with thousands of snapshots) — run it in the background and merge.
+func SnapshotCounts(h Host) (map[string]int, error) {
+	out, err := run(h.command("zfs", "list", "-H", "-o", "name", "-t", "snapshot"))
+	if err != nil {
+		return nil, err
+	}
+	counts := map[string]int{}
+	for _, s := range strings.Split(out, "\n") {
+		if i := strings.IndexByte(s, '@'); i > 0 {
+			counts[s[:i]]++
+		}
+	}
+	return counts, nil
 }
 
 // ListSnapshots lists the snapshots of a dataset (newest last).
@@ -517,6 +526,14 @@ var propControls = map[string]PropControl{
 	"sharenfs":             {"text", nil},
 	"sharesmb":             {"text", nil},
 	"special_small_blocks": {"text", nil},
+}
+
+// riskyProps confirm before applying — a stray toggle here can unmount data,
+// break boot, or hide a filesystem. Shared by both editors (GUI + TUI).
+var riskyProps = map[string]bool{
+	"mountpoint": true, "canmount": true, "readonly": true,
+	"quota": true, "refquota": true, "reservation": true, "refreservation": true,
+	"sharenfs": true, "sharesmb": true,
 }
 
 // Prop is a dataset property for the editor.
@@ -1017,7 +1034,7 @@ func ListChildren(h Host, dataset string) ([]Dataset, error) {
 		if len(f) < 3 || f[0] == dataset {
 			continue
 		}
-		rows = append(rows, Dataset{Name: f[0], Used: human(f[1]), Refer: human(f[2])})
+		rows = append(rows, Dataset{Name: f[0], Used: human(f[1]), Refer: human(f[2]), Snaps: -1})
 	}
 	return rows, nil
 }
@@ -1041,7 +1058,7 @@ func ListSubtree(h Host, path string) ([]Dataset, error) {
 		if len(f) < 3 {
 			continue
 		}
-		rows = append(rows, Dataset{Name: f[0], Used: human(f[1]), Refer: human(f[2])})
+		rows = append(rows, Dataset{Name: f[0], Used: human(f[1]), Refer: human(f[2]), Snaps: -1})
 	}
 	return rows, nil
 }

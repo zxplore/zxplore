@@ -139,6 +139,36 @@ func (sm *snapMenu) view(width, height int) string {
 	return paneFocus.Width(w).Padding(0, 1).Render(b.String())
 }
 
+// ── option picker (the TUI's "dropdown") ─────────────────────────────────────
+
+// picker offers a fixed option list — enum/bool property values, exactly what
+// the GUI shows as a dropdown. Enter dispatches action(payload..., choice).
+type picker struct {
+	title   string
+	options []string
+	cursor  int
+	action  string
+	payload []string
+}
+
+func (pk *picker) view(width int) string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render(pk.title) + "\n\n")
+	for i, o := range pk.options {
+		line := "  " + o
+		if i == pk.cursor {
+			line = cursorStyle.Render(padRight(line, 30))
+		}
+		b.WriteString(line + "\n")
+	}
+	b.WriteString("\n" + footerStyle.Render("↵ apply   ↑/↓ move   esc cancel"))
+	w := width / 3
+	if w < 36 {
+		w = 36
+	}
+	return paneFocus.Width(w).Padding(0, 2).Render(b.String())
+}
+
 // ── pager (diff output, pool dossier, importable pools…) ─────────────────────
 
 type pager struct {
@@ -187,6 +217,8 @@ const tuiHelp = `  BROWSER (F1)
     ↑/↓ j/k         move          g/G        first / last
     ctrl+d/ctrl+u   half page     /          filter datasets
     ↵               snapshot menu (explore / diff / clone / rollback / …)
+    tab             edit properties (blue bar on the right pane; ↵ = change
+                    with the same option lists as the GUI; tab/esc back)
     x  or F3        file explorer on the dataset
     s               snapshot now            b   bookmark location
     c               connect a host          r   reload
