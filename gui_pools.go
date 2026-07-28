@@ -130,12 +130,10 @@ func showPoolManager(w fyne.Window, onChange func()) {
 						"No exported pools found on this machine's devices.", w)
 					return
 				}
-				var pd dialog.Dialog
-				box := container.NewVBox(widget.NewLabel("Exported pools found — pick one to import:"))
+				var acts []menuAction
 				for _, n := range names {
 					n := n
-					box.Add(widget.NewButton("Import  "+n+"   (zpool import "+n+")", func() {
-						pd.Hide()
+					acts = append(acts, menuAction{"Import  " + n + "   (zpool import " + n + ")", func() {
 						go func() {
 							e := ImportPool(host, n)
 							fyne.Do(func() {
@@ -150,10 +148,9 @@ func showPoolManager(w fyne.Window, onChange func()) {
 								}
 							})
 						}()
-					}))
+					}})
 				}
-				pd = dialog.NewCustom("Importable pools", "Cancel", box, w)
-				pd.Show()
+				showActionMenu("Importable pools", acts, w)
 			})
 		}()
 	})

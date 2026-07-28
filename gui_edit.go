@@ -20,13 +20,16 @@ import (
 )
 
 // snapshotActionDialog is the menu shown when a snapshot is activated (Enter or
-// click): roll back / clone / hold / release / destroy. Every mutation runs
-// privileged (pkexec / delegated ssh); the destructive ones confirm first.
-// onDone refreshes the caller (snapshot list + dossier) after any action.
+// click): roll back / clone / browse / diff / hold / release / destroy. An
+// arrow-first action menu (↑/↓ + Enter, or click) — NOT a button stack, which
+// the arrows can't drive. Every mutation runs privileged; destructive ones
+// confirm first. onDone refreshes the caller after any action.
 func snapshotActionDialog(host Host, snap string, w fyne.Window, onDone func()) {
 	short := snap
+	ds := snap
 	if i := strings.IndexByte(snap, '@'); i >= 0 {
 		short = snap[i+1:]
+		ds = snap[:i]
 	}
 	run := func(verb string, fn func() error) {
 		go func() {
@@ -41,66 +44,56 @@ func snapshotActionDialog(host Host, snap string, w fyne.Window, onDone func()) 
 			})
 		}()
 	}
-	var dlg dialog.Dialog
-	act := func(text string, fn func()) *widget.Button {
-		return widget.NewButton(text, func() { dlg.Hide(); fn() })
-	}
-	rollback := act("Roll back to this snapshot", func() {
-		dialog.ShowConfirm("Roll back",
-			"Roll back to\n  "+snap+"\n\n⚠ This DESTROYS every snapshot newer than this one\n(and their clones). Continue?",
-			func(ok bool) {
-				if ok {
-					run("rolled back", func() error { return Rollback(host, snap) })
+	showActionMenu("@"+short, []menuAction{
+		{"⚠ Roll back to this snapshot…", func() {
+			dialog.ShowConfirm("Roll back",
+				"Roll back to\n  "+snap+"\n\n⚠ This DESTROYS every snapshot newer than this one\n(and their clones). Continue?",
+				func(ok bool) {
+					if ok {
+						run("rolled back", func() error { return Rollback(host, snap) })
+					}
+				}, w)
+		}},
+		{"Clone to a new dataset…", func() {
+			e := widget.NewEntry()
+			e.SetPlaceHolder("pool/new-dataset")
+			doClone := func() {
+				if strings.TrimSpace(e.Text) != "" {
+					run("cloned", func() error { return Clone(host, snap, strings.TrimSpace(e.Text)) })
 				}
-			}, w)
-	})
-	clone := act("Clone to a new dataset…", func() {
-		e := widget.NewEntry()
-		e.SetPlaceHolder("pool/new-dataset")
-		doClone := func() {
-			if strings.TrimSpace(e.Text) != "" {
-				run("cloned", func() error { return Clone(host, snap, strings.TrimSpace(e.Text)) })
 			}
-		}
-		fd := dialog.NewForm("Clone "+short, "Clone", "Cancel",
-			[]*widget.FormItem{widget.NewFormItem("New dataset", e)},
-			func(ok bool) {
-				if ok {
-					doClone()
-				}
-			}, w)
-		e.OnSubmitted = func(string) { doClone(); fd.Hide() }
-		fd.Show()
-		w.Canvas().Focus(e)
-	})
-	rollback.Importance = widget.WarningImportance // amber — it destroys newer snapshots
-	ds := snap
-	if i := strings.IndexByte(snap, '@'); i >= 0 {
-		ds = snap[:i]
-	}
-	browse := act("Browse / restore files in this snapshot…", func() {
-		showSnapshotExplorer(host, ds, short)
-	})
-	diffB := act("What changed since this snapshot — zfs diff…", func() {
-		showDiffDialog(host, ds, w, short)
-	})
-	hold := act("Hold (prevent destroy)", func() { run("held", func() error { return HoldSnap(host, snap) }) })
-	release := act("Release hold", func() { run("released", func() error { return ReleaseSnap(host, snap) }) })
-	destroy := act("Destroy snapshot", func() {
-		dialog.ShowConfirm("Destroy",
-			"Permanently destroy\n  "+snap+" ?", func(ok bool) {
-				if ok {
-					run("destroyed", func() error { return DestroySnapshot(host, snap) })
-				}
-			}, w)
-	})
-	destroy.Importance = widget.DangerImportance // red
-	content := container.NewVBox(
-		widget.NewLabelWithStyle(short, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		rollback, clone, browse, diffB, hold, release, widget.NewSeparator(), destroy,
-	)
-	dlg = dialog.NewCustom("Snapshot actions", "Cancel", content, w)
-	dlg.Show()
+			fd := dialog.NewForm("Clone "+short, "Clone", "Cancel",
+				[]*widget.FormItem{widget.NewFormItem("New dataset", e)},
+				func(ok bool) {
+					if ok {
+						doClone()
+					}
+				}, w)
+			e.OnSubmitted = func(string) { doClone(); fd.Hide() }
+			fd.Show()
+			w.Canvas().Focus(e)
+		}},
+		{"Browse / restore files in this snapshot…", func() {
+			showSnapshotExplorer(host, ds, short)
+		}},
+		{"What changed since this snapshot — zfs diff…", func() {
+			showDiffDialog(host, ds, w, short)
+		}},
+		{"Hold (prevent destroy)", func() {
+			run("held", func() error { return HoldSnap(host, snap) })
+		}},
+		{"Release hold", func() {
+			run("released", func() error { return ReleaseSnap(host, snap) })
+		}},
+		{"✖ Destroy snapshot…", func() {
+			dialog.ShowConfirm("Destroy",
+				"Permanently destroy\n  "+snap+" ?", func(ok bool) {
+					if ok {
+						run("destroyed", func() error { return DestroySnapshot(host, snap) })
+					}
+				}, w)
+		}},
+	}, w)
 }
 
 // riskyProps confirm before applying — a stray toggle here can unmount data,

@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"image/color"
 	"net/url"
+	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 
@@ -23,6 +25,7 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -30,6 +33,9 @@ import (
 
 //go:embed assets/zxplore.svg
 var iconSVG []byte
+
+//go:embed docs/zxplore.1
+var manPage []byte
 
 // repoURL / siteURL back the top-right links. repoURL points at the project site
 // (operator owns zxplore.dev); there's no public git remote yet.
@@ -40,7 +46,7 @@ const (
 
 // helpHints is the tmux-style status line along the bottom. Keep it TRUE — only
 // keys/gestures that actually work, so it stays a contract, not decoration.
-const helpHints = "  F1 browser   F2 transfer    ↑↓ move   Tab switch pane   PgUp/PgDn page   Ctrl+F or / find   right-click = actions   Alt+Q quit  "
+const helpHints = "  F1 browser   F2 transfer   ? manual    ↑↓ move   Tab pane   PgUp/PgDn page   Ctrl+F or / find   Enter/right-click = actions   Alt+Q quit  "
 
 // navPage is how many rows PgUp/PgDn jump.
 const navPage = 12
@@ -244,6 +250,17 @@ type navList struct {
 	onEnter     func()                 // Enter/Return acts on the current row
 	onSecondary func(*fyne.PointEvent) // right-click → context menu
 	onTab       func()                 // Tab hops to the sibling pane
+	onHelp      func()                 // "?" opens the manual
+}
+
+// TypedRune catches "?" (a shifted rune, never delivered as a KeyName) for
+// the in-app manual; everything else falls through.
+func (l *navList) TypedRune(r rune) {
+	if r == '?' && l.onHelp != nil {
+		l.onHelp()
+		return
+	}
+	l.List.TypedRune(r)
 }
 
 // AcceptsTab lets Tab reach TypedKey — without it Fyne's focus walk swallows
@@ -321,6 +338,162 @@ func (l *navList) TypedKey(e *fyne.KeyEvent) {
 	default:
 		l.List.TypedKey(e) // native ↑/↓/Space
 	}
+}
+
+// ── in-app manual ────────────────────────────────────────────────────────────
+// showManual renders the EMBEDDED man page in a dialog — the manual ships
+// inside the binary, so "?" works even where man/mandoc were never installed
+// (rendered nicely when they are, raw mdoc as the last resort).
+func showManual(w fyne.Window) {
+	go func() {
+		text := renderManual()
+		fyne.Do(func() {
+			lbl := widget.NewLabel(text)
+			lbl.TextStyle = fyne.TextStyle{Monospace: true}
+			lbl.Wrapping = fyne.TextWrapOff
+			d := dialog.NewCustom("zxplore(1) — manual", "Close", container.NewScroll(lbl), w)
+			d.Resize(fyne.NewSize(980, 700))
+			d.Show()
+		})
+	}()
+}
+
+func renderManual() string {
+	tmp, err := os.CreateTemp("", "zxplore-man-*.1")
+	if err == nil {
+		_, _ = tmp.Write(manPage)
+		tmp.Close()
+		defer os.Remove(tmp.Name())
+		for _, c := range []string{
+			"mandoc -Tutf8 -O width=96 " + tmp.Name() + " 2>/dev/null | col -bx",
+			"MANWIDTH=96 man -l " + tmp.Name() + " 2>/dev/null | col -bx",
+		} {
+			if out, err := exec.Command("sh", "-c", c).Output(); err == nil && len(out) > 200 {
+				return string(out)
+			}
+		}
+	}
+	return string(manPage)
+}
+
+// ── kldload flare ────────────────────────────────────────────────────────────
+// kldFlare is the green "kldload — N extra tools" chip. Fyne has no native
+// tooltips, so it implements desktop.Hoverable itself: hover (or tap) pops a
+// list of the detected k-commands; leaving hides it.
+type kldFlare struct {
+	widget.BaseWidget
+	text  *canvas.Text
+	tools []string
+	pop   *widget.PopUp
+}
+
+var kToolBlurb = map[string]string{
+	"kbe":       "boot environments",
+	"ksnap":     "snapshot helper",
+	"kst":       "snapshot status",
+	"kclone":    "clone dataset/snapshot",
+	"krecovery": "recovery — roll back a BE",
+	"kexport":   "export a dataset",
+	"kimage":    "image a dataset",
+	"kinspect":  "inspect a dataset",
+	"kdf":       "ZFS-aware disk free",
+	"kdir":      "directory helper",
+}
+
+func newKldFlare(tools []string) *kldFlare {
+	f := &kldFlare{tools: tools}
+	f.text = canvas.NewText(fmt.Sprintf("● kldload — %d extra tools", len(tools)), acGreen.at())
+	f.text.TextStyle = fyne.TextStyle{Bold: true}
+	f.text.TextSize = 13
+	repaint = append(repaint, func() { f.text.Color = acGreen.at(); f.text.Refresh() })
+	f.ExtendBaseWidget(f)
+	return f
+}
+
+func (f *kldFlare) CreateRenderer() fyne.WidgetRenderer { return widget.NewSimpleRenderer(f.text) }
+
+func (f *kldFlare) showTip() {
+	if f.pop != nil {
+		return
+	}
+	cv := fyne.CurrentApp().Driver().CanvasForObject(f)
+	if cv == nil {
+		return
+	}
+	var b strings.Builder
+	b.WriteString("kldload host detected — these k-commands are present:\n")
+	for _, t := range f.tools {
+		if d := kToolBlurb[t]; d != "" {
+			fmt.Fprintf(&b, "\n  %-10s %s", t, d)
+		} else {
+			fmt.Fprintf(&b, "\n  %s", t)
+		}
+	}
+	l := widget.NewLabel(b.String())
+	l.TextStyle = fyne.TextStyle{Monospace: true}
+	pos := fyne.CurrentApp().Driver().AbsolutePositionForObject(f)
+	f.pop = widget.NewPopUp(l, cv)
+	f.pop.ShowAtPosition(fyne.NewPos(pos.X, pos.Y+f.Size().Height+4))
+}
+
+func (f *kldFlare) hideTip() {
+	if f.pop != nil {
+		f.pop.Hide()
+		f.pop = nil
+	}
+}
+
+func (f *kldFlare) MouseIn(*desktop.MouseEvent)    { f.showTip() }
+func (f *kldFlare) MouseMoved(*desktop.MouseEvent) {}
+func (f *kldFlare) MouseOut()                      { f.hideTip() }
+func (f *kldFlare) Tapped(*fyne.PointEvent) {
+	if f.pop != nil {
+		f.hideTip()
+	} else {
+		f.showTip()
+	}
+}
+
+// ── action menu ──────────────────────────────────────────────────────────────
+// menuAction is one row of showActionMenu.
+type menuAction struct {
+	label string
+	fn    func()
+}
+
+// showActionMenu is the keyboard-first replacement for a button-stack dialog:
+// ↑/↓ move, Enter or click runs, Esc cancels. Fyne buttons only activate via
+// Tab+Space, which is why button stacks felt dead to the arrows — a list row
+// menu behaves like a real console menu.
+func showActionMenu(title string, acts []menuAction, w fyne.Window) {
+	var dlg dialog.Dialog
+	list := newNavList(
+		func() int { return len(acts) },
+		func() fyne.CanvasObject { return widget.NewLabel("t") },
+		func(i widget.ListItemID, o fyne.CanvasObject) {
+			o.(*widget.Label).SetText(acts[i].label)
+		},
+	)
+	run := func() {
+		if list.cursor >= 0 && list.cursor < len(acts) {
+			dlg.Hide()
+			acts[list.cursor].fn()
+		}
+	}
+	// arrows move the highlight only; Enter or a click runs
+	list.OnHighlighted = func(i widget.ListItemID) { list.cursor = int(i) }
+	list.OnSelected = func(i widget.ListItemID) { list.cursor = int(i); run() }
+	list.onEnter = run
+	list.cursor = 0
+
+	h := float32(len(acts))*34 + 12
+	if h > 480 {
+		h = 480
+	}
+	content := container.NewGridWrap(fyne.NewSize(440, h), list)
+	dlg = dialog.NewCustom(title, "Cancel", content, w)
+	dlg.Show()
+	w.Canvas().Focus(list)
 }
 
 // ── window ─────────────────────────────────────────────────────────────────
@@ -464,11 +637,10 @@ func runGUI() {
 	status := widget.NewLabelWithStyle(host.Label(), fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	var leftHead fyne.CanvasObject = status
 	// Flare: on a kldload host, zxplore lights up the extra k-command primitives
-	// (boot envs, etc.) and shows a green chip. Stays fully generic elsewhere.
+	// (boot envs, etc.) and shows a green chip — hover or tap it to see WHICH
+	// k-commands were detected. Stays fully generic elsewhere.
 	if kt := KldloadTools(); len(kt) > 0 {
-		flare := heading(fmt.Sprintf("● kldload — %d extra tools", len(kt)), acGreen)
-		flare.TextSize = 13
-		leftHead = container.NewHBox(status, flare)
+		leftHead = container.NewHBox(status, newKldFlare(kt))
 	}
 	repoU, _ := url.Parse(repoURL)
 	siteU, _ := url.Parse(siteURL)
@@ -487,6 +659,7 @@ func runGUI() {
 		widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), reload),
 		widget.NewButton("Servers…", func() { showServerManager(w, func(Server) {}) }),
 		widget.NewButton("Pools…", func() { showPoolManager(w, reload) }),
+		widget.NewButtonWithIcon("Manual", theme.HelpIcon(), func() { showManual(w) }),
 	)
 	if IsKldload() {
 		toolbar.Add(widget.NewButton("Boot Envs…", func() { showBootEnvManager(w) }))
@@ -591,15 +764,19 @@ func runGUI() {
 	}
 	// Right-click a dataset → the full lifecycle menu (snapshot / clone /
 	// replicate / boot-env / rollback / edit / destroy), acting on that row.
-	list.onSecondary = func(e *fyne.PointEvent) {
+	// Enter opens the same menu, so the whole lifecycle is arrow-reachable
+	// (Fyne popup menus take ↑/↓/Enter natively once shown).
+	openDatasetMenu := func(pos fyne.Position) {
 		if list.cursor < 0 || list.cursor >= len(visible) {
 			return
 		}
 		m := datasetContextMenu(host, visible[list.cursor].Name, w,
 			func() { reload() },
 			func() { editing = true; buildRight() })
-		widget.ShowPopUpMenuAtPosition(m, w.Canvas(), e.AbsolutePosition)
+		widget.ShowPopUpMenuAtPosition(m, w.Canvas(), pos)
 	}
+	list.onSecondary = func(e *fyne.PointEvent) { openDatasetMenu(e.AbsolutePosition) }
+	list.onEnter = func() { openDatasetMenu(fyne.NewPos(300, 220)) }
 
 	rightHead := container.NewBorder(nil, nil, heading("DETAILS", acBlue), editBtn)
 	dossierArea := container.NewBorder(rightHead, nil, nil, nil, rightBody)
@@ -630,6 +807,9 @@ func runGUI() {
 	// Tab hops dataset list ⇄ snapshot list (the two keyboard panes).
 	list.onTab = func() { w.Canvas().Focus(snapsList) }
 	snapsList.onTab = func() { w.Canvas().Focus(list) }
+	// "?" opens the in-app manual from either pane.
+	list.onHelp = func() { showManual(w) }
+	snapsList.onHelp = func() { showManual(w) }
 	tabs = container.NewAppTabs(
 		container.NewTabItem("Browser", split),
 		container.NewTabItem("Transfer", transferTab(w, switchTab)),

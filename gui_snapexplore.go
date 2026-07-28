@@ -108,6 +108,18 @@ func showSnapshotExplorer(h Host, dataset, initialSource string) {
 	)
 	versList.OnHighlighted = func(i widget.ListItemID) { versList.Select(i) }
 	versList.OnSelected = func(i widget.ListItemID) { versList.cursor = int(i); verSel = int(i) }
+	// Enter on a version → arrow-navigable restore menu (buttons below stay
+	// for the mouse).
+	var doRestore func(overwrite bool)
+	versList.onEnter = func() {
+		if verSel < 0 || verSel >= len(vers) {
+			return
+		}
+		showActionMenu("@"+vers[verSel].Snapshot, []menuAction{
+			{"⚠ Restore over live (overwrite)…", func() { doRestore(true) }},
+			{"Restore as copy…", func() { doRestore(false) }},
+		}, win)
+	}
 
 	versHint := widget.NewLabel("Select a file on the left — every snapshot holding it appears here,\nflagged when its copy differs from the one you're looking at.")
 	versHint.Wrapping = fyne.TextWrapWord
@@ -258,7 +270,7 @@ func showSnapshotExplorer(h Host, dataset, initialSource string) {
 	versList.onTab = func() { win.Canvas().Focus(fileList) }
 
 	// ── actions ──
-	doRestore := func(overwrite bool) {
+	doRestore = func(overwrite bool) {
 		if !haveSel || verSel < 0 || verSel >= len(vers) {
 			dialog.ShowInformation("Restore",
 				"Pick a file on the left, then one of its snapshot versions on the right.", win)
