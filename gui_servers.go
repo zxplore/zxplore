@@ -1,3 +1,5 @@
+//go:build gui
+
 // gui_servers.go — the server manager (WinSCP-style saved sessions).
 //
 // showServerManager lists saved servers and lets you connect one; serverEditDialog
@@ -14,29 +16,99 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
 // showServerManager lists saved servers; Connect calls onConnect with the chosen
-// one. New/Edit open the editor; Delete removes. Reloads the list after edits.
+// one. Two panes in the app's card style: the saved-server list (two-line rows)
+// on the left, a live detail panel + Test/Connect on the right — so the screen
+// reads as a real manager, not a bare list. Reloads after edits.
 func showServerManager(w fyne.Window, onConnect func(Server)) {
 	servers := LoadServers()
 	sel := -1
 
+	// ── right: detail panel for the selected server ──
+	detName := dialogHeading("no server selected", acCyan)
+	detBody := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Monospace: true})
+	detHint := widget.NewLabel("Pick a server on the left — or ＋ New to add your first ZFS box:\nname + host + user, then generate a key and authorize it\nwith the password ONCE (never stored).")
+	detHint.Wrapping = fyne.TextWrapWord
+	testResult := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Monospace: true})
+	testResult.Wrapping = fyne.TextWrapWord
+
+	showDetail := func() {
+		testResult.SetText("")
+		if sel < 0 || sel >= len(servers) {
+			detName.Text = "no server selected"
+			detName.Refresh()
+			detBody.SetText("")
+			detHint.Show()
+			return
+		}
+		s := servers[sel]
+		detHint.Hide()
+		detName.Text = s.Name
+		detName.Refresh()
+		key := "(none — generate or add one, then Authorize)"
+		if s.KeyPath != "" {
+			key = s.KeyPath
+		}
+		jump, path := s.Jump, s.Path
+		if jump == "" {
+			jump = "(direct)"
+		}
+		if path == "" {
+			path = "(whole machine)"
+		}
+		port := s.Port
+		if port == 0 {
+			port = 22
+		}
+		detBody.SetText(fmt.Sprintf(
+			"host      %s\nuser      %s\nport      %d\ndataset   %s\njump      %s\nkey       %s",
+			s.Host, s.User, port, path, jump, key))
+	}
+
+	// ── left: two-line rows (bold name / mono target) ──
 	var list *widget.List
 	list = widget.NewList(
 		func() int { return len(servers) },
-		func() fyne.CanvasObject { return widget.NewLabel("t") },
+		func() fyne.CanvasObject {
+			return container.NewVBox(
+				widget.NewLabelWithStyle("name", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+				widget.NewLabelWithStyle("sub", fyne.TextAlignLeading, fyne.TextStyle{Monospace: true}),
+			)
+		},
 		func(i widget.ListItemID, o fyne.CanvasObject) {
 			s := servers[i]
-			key := "no key"
-			if s.KeyPath != "" {
-				key = "key set"
+			box := o.(*fyne.Container)
+			key := "key ✓"
+			if s.KeyPath == "" {
+				key = "no key"
 			}
-			o.(*widget.Label).SetText(fmt.Sprintf("%s   —   %s   (%s)", s.Name, s.toHost().SSH, key))
+			port := s.Port
+			if port == 0 {
+				port = 22
+			}
+			box.Objects[0].(*widget.Label).SetText(s.Name)
+			box.Objects[1].(*widget.Label).SetText(
+				fmt.Sprintf("  %s : %d   ·   %s", s.toHost().SSH, port, key))
 		},
 	)
-	list.OnSelected = func(i widget.ListItemID) { sel = int(i) }
+	list.OnSelected = func(i widget.ListItemID) { sel = int(i); showDetail() }
+
+	empty := widget.NewLabelWithStyle(
+		"No saved servers yet.\n\n＋ New adds a ZFS box (any Linux distro or FreeBSD\nrunning OpenZFS — key-first, passwords never stored).",
+		fyne.TextAlignCenter, fyne.TextStyle{})
+	syncEmpty := func() {
+		if len(servers) == 0 {
+			empty.Show()
+		} else {
+			empty.Hide()
+		}
+	}
+	syncEmpty()
 
 	reload := func() {
 		servers = LoadServers()
@@ -45,17 +117,19 @@ func showServerManager(w fyne.Window, onConnect func(Server)) {
 		}
 		list.UnselectAll()
 		list.Refresh()
+		syncEmpty()
+		showDetail()
 	}
 
-	newBtn := widget.NewButton("＋ New server", func() {
+	newBtn := widget.NewButtonWithIcon("New", theme.ContentAddIcon(), func() {
 		serverEditDialog(w, Server{Port: 22}, true, reload)
 	})
-	editBtn := widget.NewButton("Edit", func() {
+	editBtn := widget.NewButtonWithIcon("Edit", theme.DocumentCreateIcon(), func() {
 		if sel >= 0 && sel < len(servers) {
 			serverEditDialog(w, servers[sel], false, reload)
 		}
 	})
-	delBtn := widget.NewButton("Delete", func() {
+	delBtn := widget.NewButtonWithIcon("Delete", theme.DeleteIcon(), func() {
 		if sel < 0 || sel >= len(servers) {
 			return
 		}
@@ -69,8 +143,26 @@ func showServerManager(w fyne.Window, onConnect func(Server)) {
 	})
 	delBtn.Importance = widget.DangerImportance
 
+	testBtn := widget.NewButtonWithIcon("Test", theme.ConfirmIcon(), func() {
+		if sel < 0 || sel >= len(servers) {
+			return
+		}
+		s := servers[sel]
+		testResult.SetText("… connecting to " + s.sshTarget())
+		go func() {
+			err := TestServer(s)
+			fyne.Do(func() {
+				if err != nil {
+					testResult.SetText("✗ " + err.Error())
+				} else {
+					testResult.SetText("✓ connected — ZFS visible on " + s.sshTarget())
+				}
+			})
+		}()
+	})
+
 	var dlg dialog.Dialog
-	connectBtn := widget.NewButton("Connect →", func() {
+	connectBtn := widget.NewButtonWithIcon("Connect", theme.LoginIcon(), func() {
 		if sel >= 0 && sel < len(servers) {
 			s := servers[sel]
 			dlg.Hide()
@@ -79,13 +171,21 @@ func showServerManager(w fyne.Window, onConnect func(Server)) {
 	})
 	connectBtn.Importance = widget.HighImportance
 
-	buttons := container.NewHBox(newBtn, editBtn, delBtn, widget.NewLabel("   "), connectBtn)
-	body := container.NewBorder(
-		widget.NewLabelWithStyle("Saved servers — select one, then Connect (or New to add)",
-			fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		buttons, nil, nil, list)
-	dlg = dialog.NewCustom("Servers", "Close", body, w)
-	dlg.Resize(fyne.NewSize(680, 460))
+	leftPane := paneCard(container.NewBorder(
+		container.NewVBox(dialogHeading("SAVED SERVERS", acBlue), widget.NewSeparator()),
+		container.NewHBox(newBtn, editBtn, delBtn),
+		nil, nil,
+		container.NewStack(list, container.NewCenter(empty))))
+	rightPane := paneCard(container.NewBorder(
+		container.NewVBox(detName, widget.NewSeparator()),
+		container.NewVBox(testResult, container.NewHBox(testBtn, layout.NewSpacer(), connectBtn)),
+		nil, nil,
+		container.NewVBox(detBody, detHint)))
+	split := container.NewHSplit(leftPane, rightPane)
+	split.SetOffset(0.5)
+
+	dlg = dialog.NewCustom("Servers", "Close", split, w)
+	dlg.Resize(fyne.NewSize(940, 560))
 	dlg.Show()
 }
 

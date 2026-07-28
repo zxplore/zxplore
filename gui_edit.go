@@ -1,3 +1,5 @@
+//go:build gui
+
 // gui_edit.go — the inline property editor (the ✎ Edit side of the dossier).
 //
 // Renders a dataset's SETTABLE properties as live controls — checkbox (on/off),
@@ -72,6 +74,16 @@ func snapshotActionDialog(host Host, snap string, w fyne.Window, onDone func()) 
 		w.Canvas().Focus(e)
 	})
 	rollback.Importance = widget.WarningImportance // amber — it destroys newer snapshots
+	ds := snap
+	if i := strings.IndexByte(snap, '@'); i >= 0 {
+		ds = snap[:i]
+	}
+	browse := act("Browse / restore files in this snapshot…", func() {
+		showSnapshotExplorer(host, ds, short)
+	})
+	diffB := act("What changed since this snapshot — zfs diff…", func() {
+		showDiffDialog(host, ds, w, short)
+	})
 	hold := act("Hold (prevent destroy)", func() { run("held", func() error { return HoldSnap(host, snap) }) })
 	release := act("Release hold", func() { run("released", func() error { return ReleaseSnap(host, snap) }) })
 	destroy := act("Destroy snapshot", func() {
@@ -85,7 +97,7 @@ func snapshotActionDialog(host Host, snap string, w fyne.Window, onDone func()) 
 	destroy.Importance = widget.DangerImportance // red
 	content := container.NewVBox(
 		widget.NewLabelWithStyle(short, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		rollback, clone, hold, release, widget.NewSeparator(), destroy,
+		rollback, clone, browse, diffB, hold, release, widget.NewSeparator(), destroy,
 	)
 	dlg = dialog.NewCustom("Snapshot actions", "Cancel", content, w)
 	dlg.Show()

@@ -2,9 +2,15 @@
 # host (Linux distros or FreeBSD). This Makefile is the clone-and-build entry
 # point (the kldload ISO build calls it too).
 #
-#   git clone https://github.com/kldload/zxplore && cd zxplore && make && sudo make install
+#   git clone https://github.com/zxplore/zxplore && cd zxplore && make && sudo make install
 #
-# BUILD dependencies (cgo + OpenGL, for the Fyne GUI):
+# Two binaries from one tree:
+#   zxplore      — the full build: native GUI (Fyne) + TUI (--tui). Needs cgo+GL.
+#   zxplore-tui  — STATIC terminal-only build (CGO_ENABLED=0): zero runtime
+#                  deps, scp it to any ZFS box. Headless hosts can build just
+#                  this (`make zxplore-tui`) with nothing but the Go toolchain.
+#
+# BUILD dependencies (cgo + OpenGL — for the `zxplore` GUI binary only):
 #   Fedora/RHEL:   dnf install -y golang gcc pkgconf-pkg-config \
 #                    mesa-libGL-devel libX11-devel libXcursor-devel \
 #                    libXrandr-devel libXinerama-devel libXi-devel \
@@ -25,6 +31,7 @@ PREFIX  ?= /usr/local
 DESTDIR ?=
 BINDIR   = $(DESTDIR)$(PREFIX)/bin
 APPDIR   = $(DESTDIR)$(PREFIX)/share/applications
+MANDIR   = $(DESTDIR)$(PREFIX)/share/man/man1
 ICONDIR  = $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps
 DOCDIR   = $(DESTDIR)$(PREFIX)/share/doc/zxplore
 UNITDIR  = $(DESTDIR)/usr/lib/systemd/system
@@ -33,16 +40,21 @@ GO      ?= go
 GOFLAGS ?= -trimpath
 
 # ── build ────────────────────────────────────────────────────────────────────
-# The native GUI binary (Fyne) needs cgo. `zxplore --tui` runs the terminal UI.
-build: zxplore
+# zxplore (GUI+TUI, cgo) and zxplore-tui (static, terminal-only, no cgo).
+build: zxplore zxplore-tui
 
 zxplore: $(wildcard *.go) go.mod go.sum
-	CGO_ENABLED=1 $(GO) build $(GOFLAGS) -o zxplore .
+	CGO_ENABLED=1 $(GO) build $(GOFLAGS) -tags gui -o zxplore .
+
+zxplore-tui: $(wildcard *.go) go.mod go.sum
+	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -o zxplore-tui .
 
 # ── install ──────────────────────────────────────────────────────────────────
 install: build
-	install -d $(BINDIR) $(APPDIR) $(ICONDIR) $(DOCDIR)
+	install -d $(BINDIR) $(APPDIR) $(ICONDIR) $(DOCDIR) $(MANDIR)
 	install -m 0755 zxplore                  $(BINDIR)/zxplore
+	install -m 0755 zxplore-tui              $(BINDIR)/zxplore-tui
+	install -m 0644 docs/zxplore.1           $(MANDIR)/zxplore.1
 	install -m 0644 assets/zxplore.svg       $(ICONDIR)/zxplore.svg
 	install -m 0644 contrib/zxplore.desktop  $(APPDIR)/zxplore.desktop
 	install -m 0644 README.md docs/DESIGN.md $(DOCDIR)
@@ -57,12 +69,14 @@ install: build
 	@echo "zxplore installed to $(PREFIX)/bin"
 
 uninstall:
-	rm -f $(BINDIR)/zxplore $(BINDIR)/zxplore-api $(BINDIR)/zxplore-txn
+	rm -f $(BINDIR)/zxplore $(BINDIR)/zxplore-tui
+	rm -f $(BINDIR)/zxplore-api $(BINDIR)/zxplore-txn
 	rm -f $(APPDIR)/zxplore.desktop $(ICONDIR)/zxplore.svg
+	rm -f $(MANDIR)/zxplore.1
 	rm -f $(UNITDIR)/zxplore-api.service
 	rm -rf $(DOCDIR)
 
 clean:
-	rm -f zxplore zxplore-bin
+	rm -f zxplore zxplore-tui zxplore-bin
 
 .PHONY: build install uninstall clean

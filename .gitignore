@@ -9,6 +9,7 @@ __pycache__/
 # Go build
 /zxplore-bin
 /zxplore
+/zxplore-tui
 *.o
 
 # rendered icon rasters

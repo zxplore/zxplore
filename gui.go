@@ -1,3 +1,5 @@
+//go:build gui
+
 // gui.go — the native GUI (Fyne). Default surface for zxplore.
 //
 // A real window: keyboard navigation AND mouse (click, scroll, right-click),
@@ -29,9 +31,6 @@ import (
 //go:embed assets/zxplore.svg
 var iconSVG []byte
 
-// version is the zxplore release, shown top-right and linked to the repo.
-const version = "0.1.0"
-
 // repoURL / siteURL back the top-right links. repoURL points at the project site
 // (operator owns zxplore.dev); there's no public git remote yet.
 const (
@@ -41,7 +40,7 @@ const (
 
 // helpHints is the tmux-style status line along the bottom. Keep it TRUE — only
 // keys/gestures that actually work, so it stays a contract, not decoration.
-const helpHints = "  F1 browser   F2 transfer    ↑↓ move   PgUp/PgDn page   Ctrl+F or / find   hover/click = details   Alt+Q quit  "
+const helpHints = "  F1 browser   F2 transfer    ↑↓ move   PgUp/PgDn page   Ctrl+F or / find   right-click = actions   Alt+Q quit  "
 
 // navPage is how many rows PgUp/PgDn jump.
 const navPage = 12
@@ -186,6 +185,23 @@ func heading(text string, a accentPair) *canvas.Text {
 	return t
 }
 
+// dialogHeading / paneCard are heading()/card() for SHORT-LIVED surfaces
+// (dialogs, secondary windows): same look, but no repaint registration —
+// registering would leak one closure per open, and a dialog never outlives a
+// theme flip long enough to matter.
+func dialogHeading(text string, a accentPair) *canvas.Text {
+	t := canvas.NewText(text, a.at())
+	t.TextStyle = fyne.TextStyle{Bold: true}
+	t.TextSize = 14
+	return t
+}
+
+func paneCard(content fyne.CanvasObject) fyne.CanvasObject {
+	r := canvas.NewRectangle(cardColor())
+	r.CornerRadius = 8
+	return container.NewStack(r, container.NewPadded(content))
+}
+
 func variantDark() bool {
 	return fyne.CurrentApp() != nil && fyne.CurrentApp().Settings().ThemeVariant() == theme.VariantDark
 }
@@ -303,8 +319,12 @@ func runGUI() {
 	w.Resize(fyne.NewSize(1920, 1200))
 	w.CenterOnScreen()
 
-	all, listErr := ListDatasets(host)
-	visible := append([]Dataset(nil), all...) // the filtered view the list renders
+	// Data loads asynchronously AFTER the window paints (a splash covers the
+	// first scan) — zfs/zpool enumeration can take seconds and must never block
+	// first pixel.
+	var all []Dataset
+	var listErr error
+	var visible []Dataset // the filtered view the list renders
 
 	// Dossier: a selectable monospace Label (SetText reliably repaints and follows
 	// the theme) inside a Scroll — no RichText/scroll refresh fight.
@@ -320,16 +340,30 @@ func runGUI() {
 	}
 
 	lastShown := -1
+	dossierGen := 0 // drops stale async renders when the selection moves on
 	setDossier := func(i int) {
 		if i == lastShown {
 			return
 		}
 		lastShown = i
-		if i >= 0 && i < len(visible) {
-			renderDossier(Dossier(host, visible[i].Name))
-		} else {
+		dossierGen++
+		if i < 0 || i >= len(visible) {
 			renderDossier("")
+			return
 		}
+		name := visible[i].Name
+		gen := dossierGen
+		renderDossier("… " + name)
+		// Dossier makes several zfs/zpool calls (seconds over ssh) — fetch off
+		// the UI thread so arrowing through the list never stutters.
+		go func() {
+			text := Dossier(host, name)
+			fyne.Do(func() {
+				if gen == dossierGen {
+					renderDossier(text)
+				}
+			})
+		}()
 	}
 
 	list := newNavList(
@@ -371,12 +405,14 @@ func runGUI() {
 	list.onFind = func() { w.Canvas().Focus(search) }
 
 	// ZPOOLS machine overview, pinned at the top.
-	poolsLabel := widget.NewLabel(PoolsOverview(host))
+	poolsLabel := widget.NewLabel("… scanning pools")
 	poolsLabel.TextStyle = fyne.TextStyle{Monospace: true}
 
-	reload := func() {
-		all, listErr = ListDatasets(host)
-		poolsLabel.SetText(PoolsOverview(host))
+	// applyLoad lands a finished scan on the UI thread; reload runs one in the
+	// background (refresh button, post-mutation refreshes).
+	applyLoad := func(rows []Dataset, err error, pools string) {
+		all, listErr = rows, err
+		poolsLabel.SetText(pools)
 		if listErr != nil {
 			renderDossier("cannot list datasets:\n" + listErr.Error() +
 				"\n\n(zxplore needs permission to read ZFS — run it as root, or grant\n" +
@@ -384,6 +420,13 @@ func runGUI() {
 			return
 		}
 		applyFilter(search.Text) // rebuild visible + select row 0
+	}
+	reload := func() {
+		go func() {
+			rows, err := ListDatasets(host)
+			pools := PoolsOverview(host)
+			fyne.Do(func() { applyLoad(rows, err, pools) })
+		}()
 	}
 
 	// ── top: title row (status + kldload flare left, wordmark right) ──
@@ -474,17 +517,34 @@ func runGUI() {
 	snapsList.OnHighlighted = func(i widget.ListItemID) { snapsList.cursor = int(i) } // arrows: move only
 	snapsList.OnSelected = func(i widget.ListItemID) { snapsList.cursor = int(i); openSnapAction() }
 	snapsList.onEnter = openSnapAction
+	snapsGen := 0
 	reloadSnaps = func() {
-		if name := curName(); name != "" {
-			snaps, _ = ListSnapshots(host, name)
-		} else {
+		snapsGen++
+		gen := snapsGen
+		name := curName()
+		if name == "" {
 			snaps = nil
-		}
-		if snapsList.cursor >= len(snaps) {
 			snapsList.cursor = -1
+			snapsList.UnselectAll()
+			snapsList.Refresh()
+			return
 		}
-		snapsList.UnselectAll()
-		snapsList.Refresh()
+		// One `zfs list` per selection change — off the UI thread, stale
+		// results dropped, so arrow-scrolling stays fluid even over ssh.
+		go func() {
+			rows, _ := ListSnapshots(host, name)
+			fyne.Do(func() {
+				if gen != snapsGen {
+					return
+				}
+				snaps = rows
+				if snapsList.cursor >= len(snaps) {
+					snapsList.cursor = -1
+				}
+				snapsList.UnselectAll()
+				snapsList.Refresh()
+			})
+		}()
 	}
 
 	// Selecting a dataset: refresh the read dossier (or the edit form) AND the
@@ -548,7 +608,37 @@ func runGUI() {
 	helpText.TextSize = 12
 	helpBar := container.NewStack(helpBG, helpText)
 
-	w.SetContent(container.NewBorder(top, helpBar, nil, nil, tabs))
+	mainUI := container.NewBorder(top, helpBar, nil, nil, tabs)
+
+	// ── splash: covers the UI while the first ZFS scan runs ──
+	splashColor := func() color.Color {
+		if variantDark() {
+			return color.NRGBA{R: 0x08, G: 0x09, B: 0x0c, A: 0xff}
+		}
+		return color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+	}
+	splashBG := canvas.NewRectangle(splashColor())
+	repaint = append(repaint, func() { splashBG.FillColor = splashColor(); splashBG.Refresh() })
+	splashLogo := canvas.NewImageFromResource(fyne.NewStaticResource("zxplore.svg", iconSVG))
+	splashLogo.FillMode = canvas.ImageFillContain
+	splashLogo.SetMinSize(fyne.NewSize(128, 128))
+	splashTitle := heading("z x p l o r e", acGreen)
+	splashTitle.TextSize = 26
+	splashTitle.Alignment = fyne.TextAlignCenter
+	splashSub := heading("the universal ZFS console", acCyan)
+	splashSub.TextSize = 13
+	splashSub.Alignment = fyne.TextAlignCenter
+	splashPhase := widget.NewLabelWithStyle("connecting to ZFS…",
+		fyne.TextAlignCenter, fyne.TextStyle{Monospace: true})
+	splashBar := widget.NewProgressBarInfinite()
+	splash := container.NewStack(splashBG, container.NewCenter(container.NewVBox(
+		container.NewCenter(splashLogo),
+		splashTitle, splashSub,
+		container.NewCenter(container.NewGridWrap(
+			fyne.NewSize(300, splashBar.MinSize().Height), splashBar)),
+		splashPhase,
+	)))
+	w.SetContent(container.NewStack(mainUI, splash))
 
 	// Ctrl+F opens find from anywhere — a modifier shortcut fires globally
 	// (unlike bare "/"/F-keys, which only reach the focused widget). Super/Win
@@ -577,13 +667,20 @@ func runGUI() {
 	// Focus the list so ↑/↓/PgUp/PgDn/Home/End and "/" reach it immediately.
 	w.Canvas().Focus(list)
 
-	if listErr != nil {
-		renderDossier("cannot list datasets:\n" + listErr.Error() +
-			"\n\n(zxplore needs permission to read ZFS — run it as root, or grant\n" +
-			" `zfs allow` on the pool.)")
-	} else if len(visible) > 0 {
-		list.selectAt(0)
-	}
+	// First scan: off the UI thread, phase-labelled on the splash, which lifts
+	// once the data lands.
+	go func() {
+		fyne.Do(func() { splashPhase.SetText("listing datasets…") })
+		rows, err := ListDatasets(host)
+		fyne.Do(func() { splashPhase.SetText("reading pool status…") })
+		pools := PoolsOverview(host)
+		fyne.Do(func() {
+			applyLoad(rows, err, pools)
+			splashBar.Stop()
+			splash.Hide()
+			w.Canvas().Focus(list)
+		})
+	}()
 
 	// Recolor the hand-colored panels/headers now the variant is resolved, and
 	// again whenever the GNOME light/dark setting changes.

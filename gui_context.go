@@ -1,3 +1,5 @@
+//go:build gui
+
 // gui_context.go — the right-click / context menu on a dataset.
 //
 // One gesture for the whole ZFS lifecycle: snapshot, clone/duplicate, replicate
@@ -61,6 +63,12 @@ func datasetContextMenu(h Host, dataset string, w fyne.Window, refresh, onEdit f
 			}, w)
 	}
 
+	explore := fyne.NewMenuItem("Snapshot explorer — browse / restore files…", func() {
+		showSnapshotExplorer(h, dataset, "")
+	})
+	diffItem := fyne.NewMenuItem("What changed — zfs diff…", func() {
+		showDiffDialog(h, dataset, w, "")
+	})
 	snapNow := fyne.NewMenuItem("Snapshot now…", func() {
 		promptName("Snapshot "+dataset, "Name", "snap-"+time.Now().Format("20060102-150405"), func(n string) {
 			runOp("snapshot", func() error { _, e := SnapshotNow(h, dataset, n); return e })
@@ -200,7 +208,7 @@ func datasetContextMenu(h Host, dataset string, w fyne.Window, refresh, onEdit f
 	return fyne.NewMenu("",
 		newChild, newVol, renameItem, mountItem, unmountItem, enc,
 		fyne.NewMenuItemSeparator(),
-		snapNow, clone, replicate, be,
+		snapNow, explore, diffItem, clone, replicate, be,
 		fyne.NewMenuItemSeparator(), rollback, edit,
 		fyne.NewMenuItemSeparator(), destroy)
 }

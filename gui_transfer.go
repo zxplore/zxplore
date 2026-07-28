@@ -1,3 +1,5 @@
+//go:build gui
+
 // gui_transfer.go — the GUI transfer view.
 //
 // Left pane = the LOCAL filesystem (source). Right pane = the TARGET, connected

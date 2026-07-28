@@ -1,3 +1,5 @@
+//go:build gui
+
 // gui_pools.go — the pool manager (F4).
 //
 // Turns the read-only ZPOOLS overview into action: select a pool and scrub, stop

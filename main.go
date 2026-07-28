@@ -1,12 +1,13 @@
 // main.go — entry point for zxplore, the ZFS console.
 //
-// Default: a native GUI (Fyne) — real window, keyboard + mouse, own icon.
+// One repo, two surfaces, one engine (zfs.go → the portable zfs/zpool CLI):
 //
-//	zxplore            → GUI
-//	zxplore --tui      → the terminal UI (bubbletea), for headless / SSH / power use
+//	zxplore            → native GUI (Fyne) in the full build; the static
+//	                     TUI-only build (no `gui` tag) starts the TUI instead
+//	zxplore --tui      → the terminal UI (bubbletea) — headless / SSH / power use
+//	zxplore --version  → version and exit
 //
-// Both share the zfs.go engine. It shells out to the portable zfs/zpool CLI, so
-// it runs on any ZFS system (Linux distros + FreeBSD); on a kldload host it
+// Runs on any ZFS system (Linux distros + FreeBSD); on a kldload host it
 // lights up the extra primitives (boot environments, etc.).
 package main
 
@@ -19,14 +20,30 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// version is the zxplore release (shown by --version and in the GUI header).
+const version = "0.1.0"
+
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "--tui" {
-		elevate() // safe in a terminal — root inherits the tty
-		runTUI()
-		return
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--version", "-V":
+			fmt.Println("zxplore " + version)
+			return
+		case "--help", "-h":
+			fmt.Print("usage: zxplore [--tui] [--version]\n\n" +
+				"  (no flags)   native GUI (static builds start the TUI)\n" +
+				"  --tui        terminal UI — headless / SSH\n" +
+				"  --version    print version and exit\n\n" +
+				"Documentation: man zxplore\n")
+			return
+		case "--tui":
+			elevate() // safe in a terminal — root inherits the tty
+			runTUI()
+			return
+		}
 	}
 	// GUI: do NOT sudo-reexec — root can't reach the user's Wayland/X display.
-	// Privileged ZFS ops are elevated per-command (pkexec/sudo-askpass) — TODO.
+	// Privileged ZFS ops elevate per-command (pkexec local, delegated ssh remote).
 	runGUI()
 }
 

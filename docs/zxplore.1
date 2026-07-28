@@ -1,0 +1,176 @@
+.\" zxplore.1 — manual page for zxplore, the universal ZFS console.
+.\" Format: mdoc(7). Render check: mandoc -Tlint docs/zxplore.1
+.Dd July 27, 2026
+.Dt ZXPLORE 1
+.Os
+.Sh NAME
+.Nm zxplore
+.Nd universal ZFS console for Linux and FreeBSD
+.Sh SYNOPSIS
+.Nm
+.Op Fl -tui
+.Op Fl -version
+.Sh DESCRIPTION
+.Nm
+is a direct console for OpenZFS: browse datasets and snapshots with a full
+property and permission dossier, take and manage snapshots, restore
+individual files from any snapshot, replicate datasets between machines,
+and manage pools, boot environments, and native encryption.
+.Pp
+Every action maps to a plain
+.Xr zfs 8 ,
+.Xr zpool 8 ,
+or
+.Xr ssh 1
+command.
+Nothing is hidden and nothing is invented: destructive operations show the
+literal command before it runs, and every executed mutation is appended to
+an audit log (see
+.Sx FILES ) .
+.Pp
+Two surfaces share one engine:
+.Bl -tag -width "zxplore --tui"
+.It Nm
+the native GUI (keyboard and mouse, right-click menus).
+In the static terminal-only build this starts the TUI instead.
+.It Nm Fl -tui
+the terminal UI, for headless hosts and SSH sessions.
+.El
+.Pp
+The options are as follows:
+.Bl -tag -width Ds
+.It Fl -tui
+Start the terminal UI.
+When not running as root,
+.Nm
+re-executes itself under
+.Xr sudo 8
+(ZFS administration requires privilege; the terminal keeps the tty).
+.It Fl -version , Fl V
+Print the version and exit.
+.El
+.Sh THE BROWSER
+The main view lists every dataset and volume with a pinned pool overview
+(health, capacity, fragmentation, scrub state, errors).
+Selecting a dataset renders its dossier: health verdict, every property
+grouped by concern with its source
+.Pq local, inherited, received, default ,
+POSIX mode and ACLs on the mountpoint, and
+.Xr zfs-allow 8
+delegations.
+Right-clicking a dataset opens the lifecycle menu: create child/volume,
+rename, mount, encryption (load/unload/change key, create encrypted),
+snapshot, snapshot explorer, diff, clone, replicate, boot environment,
+rollback, destroy.
+.Sh SNAPSHOT EXPLORER
+The explorer fuses the file level with the snapshot level.
+It browses the files of a dataset \(em the live tree, or transparently
+inside any snapshot via the
+.Pa .zfs/snapshot
+directory \(em and for any selected path shows every snapshot that contains
+it, with each copy's size and modification time, flagged when a copy
+differs from the one in view.
+.Pp
+Any version can be restored into the live dataset, either overwriting in
+place or alongside as
+.Pa name.from-SNAPSHOT .
+A directory restored over live is MERGED
+.Pq files created after the snapshot survive ;
+use rollback for a true reset.
+The exact
+.Xr cp 1
+command is shown before anything runs.
+.Pp
+The diff pane renders
+.Ql zfs diff -H
+between two snapshots, or between a snapshot and the live filesystem,
+colored by change type
+.Pq modified, added, removed, renamed
+and filterable by path substring.
+.Sh REMOTE OPERATION
+Saved servers connect over
+.Xr ssh 1
+with key-first authentication: generate or import a key, then authorize it
+on the server with a password used exactly once and never stored.
+Jump hosts (ProxyJump chains) and non-default ports are supported.
+Replication streams
+.Ql zfs send
+into
+.Ql zfs recv
+for any local/remote combination, incremental when a common snapshot
+exists, into a readonly, non-automounting target.
+.Sh PRIVILEGES
+.Nm
+runs unprivileged and elevates per command: locally through
+.Xr pkexec 1 ,
+remotely as the connected (ideally delegated) user.
+Encryption passphrases travel on standard input, never on a command line.
+On the remote side, grant a delegated user the needed permissions with
+.Xr zfs-allow 8
+rather than connecting as root; the
+.Ql diff
+permission additionally enables unprivileged
+.Ql zfs diff .
+.Sh KEY BINDINGS
+.Bl -tag -width "PgUp/PgDn, Home/End" -compact
+.It F1 / F2
+switch Browser / Transfer.
+.It Arrows, PgUp/PgDn, Home/End
+move; the detail pane follows.
+.It Ctrl+F or /
+find (live filter).
+.It Enter
+act on the highlighted row (snapshot menu, enter directory).
+.It Right-click
+dataset lifecycle menu.
+.It Escape
+dismiss the topmost dialog or window.
+.It Alt+Q
+quit.
+.El
+.Sh FILES
+.Bl -tag -width Ds
+.It Pa ~/.local/state/zxplore/audit.log
+one line per executed mutating command: RFC 3339 timestamp, target host,
+exact argv.
+Passphrases never appear (they are not argv).
+.It Pa ~/.config/zxplore/servers.json
+saved servers.
+Contains no passwords \(em key paths only.
+.It Pa MOUNTPOINT/.zfs/snapshot
+the per-dataset snapshot directory the explorer reads.
+Works whether the
+.Ql snapdir
+property is
+.Ql hidden
+or
+.Ql visible .
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Sh EXAMPLES
+Run the console, headless:
+.Pp
+.Dl $ zxplore --tui
+.Pp
+Build the static terminal binary and drop it on a storage box:
+.Pp
+.Dl $ make zxplore-tui && scp zxplore-tui box:/usr/local/bin/zxplore
+.Pp
+Delegate enough to browse, snapshot, and diff a dataset unprivileged:
+.Pp
+.Dl # zfs allow carol send,snapshot,hold,diff,mount tank/data
+.Sh SEE ALSO
+.Xr ssh 1 ,
+.Xr zfs 8 ,
+.Xr zfs-allow 8 ,
+.Xr zpool 8
+.Sh HISTORY
+.Nm
+targets OpenZFS on Linux and FreeBSD from one codebase, shelling out to the
+portable
+.Ql zfs Ns / Ns Ql zpool
+CLI rather than binding libzfs \(em which is what keeps it remote-capable
+and portable.
+.Sh AUTHORS
+.An Anthony Carpenter Aq Mt admin@zxplore.dev

@@ -13,8 +13,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Dataset is one ZFS filesystem or volume row.
@@ -549,6 +551,7 @@ func DatasetProps(h Host, dataset string) ([]Prop, error) {
 // remotely over ssh as the connected (delegated) user. Returns ZFS's own error
 // text on failure so the GUI can show exactly what was rejected.
 func zfsAdmin(h Host, args ...string) error {
+	auditLog(h, append([]string{"zfs"}, args...))
 	var cmd *exec.Cmd
 	if h.SSH == "" {
 		cmd = exec.Command("pkexec", append([]string{"zfs"}, args...)...)
@@ -570,6 +573,7 @@ func SetProp(h Host, dataset, prop, value string) error {
 // passphrase (load-key / change-key / create with keyformat=passphrase). The
 // passphrase never touches the command line or disk.
 func zfsAdminStdin(h Host, stdin string, args ...string) error {
+	auditLog(h, append([]string{"zfs"}, args...)) // argv only — stdin (passphrase) never logged
 	var cmd *exec.Cmd
 	if h.SSH == "" {
 		cmd = exec.Command("pkexec", append([]string{"zfs"}, args...)...)
@@ -604,6 +608,7 @@ func CreateEncrypted(h Host, name, passphrase string) error {
 
 // zpoolAdmin runs a privileged `zpool <args>` (pkexec local / ssh remote).
 func zpoolAdmin(h Host, args ...string) error {
+	auditLog(h, append([]string{"zpool"}, args...))
 	var cmd *exec.Cmd
 	if h.SSH == "" {
 		cmd = exec.Command("pkexec", append([]string{"zpool"}, args...)...)
@@ -633,6 +638,7 @@ func PoolStatusText(h Host, pool string) (string, error) {
 // adminExec runs an arbitrary privileged command (not just zfs) — pkexec locally,
 // ssh (delegated) remotely. Used for host tools like kldload's `kbe`.
 func adminExec(h Host, argv ...string) error {
+	auditLog(h, argv)
 	var cmd *exec.Cmd
 	if h.SSH == "" {
 		cmd = exec.Command("pkexec", argv...)
@@ -737,6 +743,7 @@ func RollbackBootEnv(h Host, snap string) error { return zfsAdmin(h, "rollback",
 // leg needs root to read/write the pool, so the pipe runs under pkexec; any
 // remote leg carries its own ssh (root can still read the user's key file).
 func RunReplicate(pipeline string) error {
+	auditLog(LocalHost(), []string{"sh", "-c", pipeline})
 	out, err := exec.Command("pkexec", "sh", "-c", pipeline).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("replicate: %v: %s", err, strings.TrimSpace(string(out)))
@@ -926,6 +933,7 @@ func ReplicatePipeline(srcHost Host, srcSnap string, dstHost Host, dstPath strin
 // SnapshotNow takes an ad-hoc snapshot of a dataset and returns its full name.
 func SnapshotNow(h Host, dataset, name string) (string, error) {
 	snap := dataset + "@" + name
+	auditLog(h, []string{"zfs", "snapshot", snap})
 	_, err := run(h.command("zfs", "snapshot", snap))
 	return snap, err
 }
@@ -962,6 +970,214 @@ func KldloadTools() []string {
 	}
 	return found
 }
+
+// ── audit log ────────────────────────────────────────────────────────────────
+
+// auditLog appends one line per EXECUTED mutating command to
+// ~/.local/state/zxplore/audit.log — timestamp, host, exact argv. Best-effort:
+// auditing must never block or fail the operation itself. Passphrases are safe
+// by construction (they travel on stdin, never in argv).
+func auditLog(h Host, argv []string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	dir := home + "/.local/state/zxplore"
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	f, err := os.OpenFile(dir+"/audit.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s\t%s\t%s\n", time.Now().Format(time.RFC3339), h.Label(), strings.Join(argv, " "))
+}
+
+// ── snapshot file explorer (browse .zfs/snapshot, per-file history, restore) ──
+
+// FileEntry is one row in the file explorer: a file or directory inside the
+// live dataset or inside a snapshot's .zfs/snapshot tree.
+type FileEntry struct {
+	Name  string
+	Dir   bool
+	Size  int64
+	MTime string // coarse, as POSIX `ls -l` prints it (portable Linux/FreeBSD)
+}
+
+// Mountpoint returns the dataset's mountpoint, erroring clearly when it isn't
+// a browsable path (legacy/none) or isn't mounted.
+func Mountpoint(h Host, dataset string) (string, error) {
+	mp := singleProp(h, dataset, "mountpoint")
+	if !strings.HasPrefix(mp, "/") {
+		return "", fmt.Errorf("%s has no browsable mountpoint (mountpoint=%s)", dataset, mp)
+	}
+	if singleProp(h, dataset, "mounted") != "yes" {
+		return "", fmt.Errorf("%s is not mounted", dataset)
+	}
+	return mp, nil
+}
+
+// parseLsLine parses one POSIX `ls -lAn` row (LC_ALL=C): perms links uid gid
+// size month day time name. Numeric -n keeps the field count stable (user
+// names can contain spaces); device nodes ("major, minor") shift by one field.
+func parseLsLine(line string) (FileEntry, bool) {
+	f := strings.Fields(line)
+	if len(f) < 9 || len(f[0]) < 10 {
+		return FileEntry{}, false
+	}
+	sizeIdx := 4
+	var size int64
+	if strings.HasSuffix(f[4], ",") && len(f) >= 10 {
+		sizeIdx = 5 // device node — no meaningful size
+	} else {
+		size, _ = strconv.ParseInt(f[4], 10, 64)
+	}
+	mtime := strings.Join(f[sizeIdx+1:sizeIdx+4], " ")
+	name := strings.Join(f[sizeIdx+4:], " ")
+	if i := strings.Index(name, " -> "); i >= 0 { // strip a symlink's target
+		name = name[:i]
+	}
+	if name == "" || name == "." || name == ".." {
+		return FileEntry{}, false
+	}
+	return FileEntry{Name: name, Dir: f[0][0] == 'd', Size: size, MTime: mtime}, true
+}
+
+// ListDir lists one directory level (dotfiles included) via POSIX `ls -lAn`,
+// so the same code works locally and over ssh, on Linux and FreeBSD alike.
+// Directories sort first, then names.
+func ListDir(h Host, path string) ([]FileEntry, error) {
+	out, err := run(h.command("sh", "-c", "LC_ALL=C ls -lAn -- "+shellQuote(path)))
+	if err != nil {
+		return nil, err
+	}
+	var rows []FileEntry
+	for _, line := range strings.Split(out, "\n") {
+		if e, ok := parseLsLine(line); ok {
+			rows = append(rows, e)
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].Dir != rows[j].Dir {
+			return rows[i].Dir
+		}
+		return rows[i].Name < rows[j].Name
+	})
+	return rows, nil
+}
+
+// FileVersion is one snapshot's copy of a path: which snapshot holds it, and
+// that copy's size/mtime — the explorer renders the deltas across time.
+type FileVersion struct {
+	Snapshot string // short name (after @)
+	Size     int64
+	MTime    string
+	Dir      bool
+}
+
+// FileVersions finds every snapshot of the dataset that contains rel and stats
+// each copy — in ONE shell round-trip (vital over ssh): the loop over
+// .zfs/snapshot/*/ runs server-side. Glob order is alphabetical; the caller
+// reorders by snapshot creation if it wants a timeline.
+func FileVersions(h Host, mountpoint, rel string) ([]FileVersion, error) {
+	snapdir := mountpoint + "/.zfs/snapshot"
+	script := "cd " + shellQuote(snapdir) +
+		` && for d in */; do LC_ALL=C ls -ldn -- "$d"` + shellQuote(rel) + ` 2>/dev/null; done; exit 0`
+	out, err := run(h.command("sh", "-c", script))
+	if err != nil {
+		return nil, err
+	}
+	var vs []FileVersion
+	for _, line := range strings.Split(out, "\n") {
+		e, ok := parseLsLine(line)
+		if !ok {
+			continue
+		}
+		i := strings.IndexByte(e.Name, '/')
+		if i <= 0 {
+			continue // must be "<snapshot>/<rel>"
+		}
+		vs = append(vs, FileVersion{Snapshot: e.Name[:i], Size: e.Size, MTime: e.MTime, Dir: e.Dir})
+	}
+	return vs, nil
+}
+
+// RestoreArgv builds the exact cp argv that restores rel from a snapshot into
+// the live dataset — shown to the operator verbatim before running (the
+// dry-run pane). overwrite=false restores alongside as <name>.from-<snapshot>.
+// A directory overwrite MERGES into the live directory (cp src/. dst): files
+// created since the snapshot survive; use rollback for a true reset.
+func RestoreArgv(mountpoint, snap, rel string, isDir, overwrite bool) (argv []string, dst string) {
+	src := mountpoint + "/.zfs/snapshot/" + snap + "/" + rel
+	dst = mountpoint + "/" + rel
+	if !overwrite {
+		dst += ".from-" + snap
+	}
+	if isDir && overwrite {
+		return []string{"cp", "-a", src + "/.", dst}, dst
+	}
+	return []string{"cp", "-a", src, dst}, dst
+}
+
+// RestoreFromSnapshot executes a RestoreArgv plan (privileged: pkexec local,
+// delegated ssh remote — .zfs/snapshot contents are often root-readable only).
+// adminExec audit-logs the exact argv.
+func RestoreFromSnapshot(h Host, argv []string) error { return adminExec(h, argv...) }
+
+// ── zfs diff ─────────────────────────────────────────────────────────────────
+
+// DiffEntry is one `zfs diff` change row: M modified, + added, - removed,
+// R renamed (Extra = the new path).
+type DiffEntry struct {
+	Change string
+	Path   string
+	Extra  string
+}
+
+// DiffCommand is the literal command SnapshotDiff runs — shown in the pane.
+func DiffCommand(from, to string) string {
+	if to == "" {
+		return "zfs diff -H " + from
+	}
+	return "zfs diff -H " + from + " " + to
+}
+
+// SnapshotDiff runs `zfs diff -H from [to]` (to == "" diffs snapshot → live).
+// Tries unprivileged first (works with a delegated `diff` permission), then
+// elevates locally via pkexec.
+func SnapshotDiff(h Host, from, to string) ([]DiffEntry, error) {
+	args := []string{"diff", "-H", from}
+	if to != "" {
+		args = append(args, to)
+	}
+	out, err := run(h.command("zfs", args...))
+	if err != nil {
+		if h.SSH != "" {
+			return nil, err
+		}
+		out, err = run(exec.Command("pkexec", append([]string{"zfs"}, args...)...))
+		if err != nil {
+			return nil, err
+		}
+	}
+	var rows []DiffEntry
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		f := strings.Split(line, "\t")
+		if len(f) < 2 || f[0] == "" {
+			continue
+		}
+		d := DiffEntry{Change: f[0], Path: f[1]}
+		if len(f) > 2 {
+			d.Extra = f[2]
+		}
+		rows = append(rows, d)
+	}
+	return rows, nil
+}
+
+// humanBytes renders a byte count like human() does for `zfs list -p` strings.
+func humanBytes(n int64) string { return human(strconv.FormatInt(n, 10)) }
 
 // human turns a parseable byte count (`zfs list -p`) into e.g. "4.9G".
 func human(s string) string {

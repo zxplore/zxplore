@@ -1,3 +1,5 @@
+//go:build gui
+
 // gui_be.go — the boot-environment manager.
 //
 // Lists the boot environments (snapshots of the active boot dataset, derived from

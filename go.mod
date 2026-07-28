@@ -1,4 +1,4 @@
-module zxplore
+module github.com/zxplore/zxplore
 
 go 1.26.5
 
