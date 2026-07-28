@@ -59,22 +59,19 @@ On most systems you *back up* your data. With ZFS, the filesystem already
 
 | | |
 |---|---|
-| <img src="docs/screenshots/snapshot-actions.png" alt="Snapshot actions"/> | **Snapshots as first-class objects.** Enter or click any snapshot: roll back (with an explicit warning about exactly what gets destroyed), clone to a new dataset, browse its files, diff it against live, hold/release, destroy. |
-| <img src="docs/screenshots/server-manager-dark.png" alt="Server manager, dark theme"/> | **Any ZFS box, from here.** WinSCP-style saved servers with key-first auth — generate, paste, or point at a key, then authorize it with a password used *once* and never stored. Jump hosts, custom ports. Replication runs local↔remote or even remote↔remote, incremental when a common snapshot exists. |
+| <img src="docs/screenshots/snapshot-actions.png" alt="Snapshot actions"/> | **Snapshots as first-class objects.** Roll back (told exactly what gets destroyed), clone, browse its files, diff against live, hold, destroy. |
+| <img src="docs/screenshots/server-manager-dark.png" alt="Server manager, dark theme"/> | **Any ZFS box, from here.** Saved servers, key-first: a password authorizes your key *once*, then it's never stored. Jump hosts, custom ports, remote↔remote replication. |
 | <img src="docs/screenshots/boot-environments.png" alt="Boot environments"/> | **Boot environments** — derived from the pool's `bootfs`, never a hardcoded name: create restore points, roll back, delete. |
-| <img src="docs/screenshots/pools.png" alt="Pool manager"/> | **Pools** — health pinned at the top of every view; scrub, trim, clear errors, **Scan / Import** for exported pools (moved disks, rescue boots), and a **drill-down dossier**: vdev topology with per-device error counters, one-shot iostat, the pool's file layout, and the two truths of free space — `zfs list` next to `df`, which famously disagree by design. |
+| <img src="docs/screenshots/pools.png" alt="Pool manager"/> | **Pools** — scrub, trim, clear, import. Drill down for vdev topology with error counters, iostat, the file layout, and the two truths of free space: `zfs list` next to `df`. |
 
-Plus the daily-driver details: a dossier with **every** property and its
-source (`local` / `inherited from …` / `default`), both permission layers
-(POSIX/ACL **and** `zfs allow`), an inline property editor, native encryption
-(unlock / lock / change-key / create — passphrases on stdin, never argv),
-dataset lifecycle (create / rename / mount / zvol / destroy), light **and**
-dark theme, and a guidance screen — not a blank window — on a host with no
-pools, or no ZFS at all.
+Plus the daily drivers: every property with its source, both permission
+layers (POSIX/ACL + `zfs allow`), an inline property editor, native
+encryption, full dataset lifecycle — and helpful guidance, never a blank
+window, on a host with no pools or no ZFS at all.
 
 <div align="center">
 <img src="docs/screenshots/splash-dark.png" width="46%" alt="zxplore splash, dark theme"/> <img src="docs/screenshots/browser-light.png" width="46%" alt="zxplore in light theme"/>
-<br/><sub>Instant splash while the first scan runs · and a light theme, if your desktop swings that way.</sub>
+<br/><sub>Instant splash · light theme included.</sub>
 </div>
 
 ## Install
