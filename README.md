@@ -29,8 +29,8 @@ show the literal command before they run, and every executed mutation lands in
 an audit log.
 
 <div align="center">
-<img src="docs/screenshots/browser-dark.png" width="920" alt="The same console in dark steel — full dossier with every property and its source, one ⚙ Edit away from changing any of them"/>
-<br/><sub>Dark or light — it follows your desktop. Every property, with its source, one <b>Edit</b> away from being changed.</sub>
+<img src="docs/screenshots/dossier-dark.png" width="920" alt="The dossier up close — health verdict, every property grouped by concern with its source, one ⚙ Edit away from changing any of them"/>
+<br/><sub>The dossier up close: health first, every property with its source, one <b>Edit</b> away from being changed.</sub>
 </div>
 
 ---
