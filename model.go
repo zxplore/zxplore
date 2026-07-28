@@ -60,7 +60,8 @@ type model struct {
 	cmdr      commander
 	// connectPane: -1 = connect the browser itself; 0/1 = connect a commander pane.
 	connectPane int
-	dossCols    int // dossier column count, derived from the pane width
+	dossCols    int    // dossier column count, derived from the pane width
+	platform    string // "OpenZFS 2.4.3 · Fedora Linux 44" for the header
 }
 
 func newModel() model {
@@ -69,6 +70,7 @@ func newModel() model {
 	ti.CharLimit = 256
 	ti.Width = 48
 	m := model{host: LocalHost(), kldload: IsKldload(), input: ti, connectPane: -1, dossCols: 1}
+	m.platform = HostPlatform(m.host)
 	m.reload()
 	return m
 }
@@ -178,6 +180,7 @@ func (m *model) refreshDossier() {
 // connect re-homes the browser at a favorite's host + lands on its path.
 func (m model) connect(f Favorite) model {
 	m.host = f.Host()
+	m.platform = HostPlatform(m.host) // the REMOTE's stack, in the header
 	m.cursor = 0
 	m.reload()
 	if f.Path != "" {
@@ -395,11 +398,15 @@ func (m model) viewTransfer() string {
 func (m model) viewBrowse() string {
 	title := titleStyle.Render("zxplore")
 	host := hostStyle.Render("  " + m.host.Label())
+	plat := ""
+	if m.platform != "" {
+		plat = dimStyle.Render("  " + m.platform)
+	}
 	badge := ""
 	if m.kldload {
 		badge = "  " + badgeStyle.Render("kldload")
 	}
-	header := lipgloss.JoinHorizontal(lipgloss.Top, title, host, badge)
+	header := lipgloss.JoinHorizontal(lipgloss.Top, title, host, plat, badge)
 
 	bodyH := m.height - 4
 	if bodyH < 3 {

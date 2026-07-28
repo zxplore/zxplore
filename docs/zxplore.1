@@ -52,6 +52,11 @@ Print the version and exit.
 .Sh THE BROWSER
 The main view lists every dataset and volume with a pinned pool overview
 (health, capacity, fragmentation, scrub state, errors).
+The header names the detected stack \(em e.g.
+.Dq OpenZFS 2.4.3 on Fedora Linux 44
+\(em degrading gracefully where
+.Ql zfs version
+does not exist (native illumos ZFS, OpenZFS before 0.8).
 Selecting a dataset renders its dossier: health verdict, every property
 grouped by concern with its source
 .Pq local, inherited, received, default ,

@@ -1024,6 +1024,54 @@ func SnapshotNow(h Host, dataset, name string) (string, error) {
 	return snap, err
 }
 
+// ZFSVersion returns the OpenZFS userland version at a host, e.g. "2.4.3-1"
+// ("" when the zfs CLI is missing or predates `zfs version`, i.e. < 0.8).
+func ZFSVersion(h Host) string {
+	out, err := run(h.command("zfs", "version"))
+	if err != nil {
+		return ""
+	}
+	first := strings.SplitN(strings.TrimSpace(out), "\n", 2)[0] // "zfs-2.4.3-1"
+	return strings.TrimSpace(strings.TrimPrefix(first, "zfs-"))
+}
+
+// HostPlatform describes what zxplore is driving, for the header chip:
+// "OpenZFS 2.4.3-1 · Fedora Linux 44", "OpenZFS 2.2.4 · FreeBSD", or
+// "ZFS · illumos/Solaris" when the stack predates `zfs version` (native
+// illumos, OpenZFS < 0.8). "" when no zfs CLI exists at all — the engine
+// works wherever zfs/zpool do, whatever the OS.
+func HostPlatform(h Host) string {
+	if _, err := run(h.command("sh", "-c", "command -v zfs")); err != nil {
+		return ""
+	}
+	osName := ""
+	if out, err := run(h.command("uname", "-s")); err == nil {
+		osName = strings.TrimSpace(out)
+	}
+	switch osName {
+	case "SunOS":
+		osName = "illumos/Solaris"
+	case "Linux":
+		// the distro name reads better than bare "Linux", best-effort
+		if out, err := run(h.command("sh", "-c",
+			`. /etc/os-release 2>/dev/null && printf '%s %s' "$NAME" "$VERSION_ID"`)); err == nil {
+			if s := strings.TrimSpace(out); s != "" {
+				osName = s
+			}
+		}
+	}
+	v := ZFSVersion(h)
+	switch {
+	case v != "" && osName != "":
+		return "OpenZFS " + v + " · " + osName
+	case v != "":
+		return "OpenZFS " + v
+	case osName != "":
+		return "ZFS · " + osName
+	}
+	return ""
+}
+
 // IsKldload reports whether we're on a kldload system, so zxplore can light up
 // the extra primitives (boot environments, etc.). Universal ZFS otherwise.
 func IsKldload() bool {

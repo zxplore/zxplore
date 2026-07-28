@@ -557,15 +557,20 @@ func runGUI() {
 
 	// ── top: title row (status + kldload flare left, wordmark right) ──
 	status := widget.NewLabelWithStyle(host.Label(), fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	var leftHead fyne.CanvasObject = status
+	// Platform chip: "● OpenZFS 2.4.3-1 · Fedora Linux 44" — filled by the
+	// first scan (it costs a couple of remote-able commands).
+	platChip := heading("", acCyan)
+	platChip.TextSize = 13
+	head := container.NewHBox(status, platChip)
 	// Flare: on a kldload host, zxplore lights up the extra k-command primitives
 	// (boot envs, etc.) and shows a green chip. The k-commands themselves are
 	// listed in the manual ("?"). Stays fully generic elsewhere.
 	if kt := KldloadTools(); len(kt) > 0 {
 		flare := heading(fmt.Sprintf("● kldload — %d extra tools", len(kt)), acGreen)
 		flare.TextSize = 13
-		leftHead = container.NewHBox(status, flare)
+		head.Add(flare)
 	}
+	var leftHead fyne.CanvasObject = head
 	repoU, _ := url.Parse(repoURL)
 	siteU, _ := url.Parse(siteURL)
 	verLink := widget.NewHyperlink("zxplore v"+version, repoU)
@@ -809,8 +814,13 @@ func runGUI() {
 	// once the data lands.
 	go func() {
 		fyne.Do(func() { splashPhase.SetText("scanning ZFS…") })
+		plat := HostPlatform(host)
 		rows, err, pools, diag := scan()
 		fyne.Do(func() {
+			if plat != "" {
+				platChip.Text = "● " + plat
+				platChip.Refresh()
+			}
 			applyLoad(rows, err, pools, diag)
 			splashBar.Stop()
 			splash.Hide()

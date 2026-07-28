@@ -171,7 +171,10 @@ The core is pure `zfs`/`zpool` + POSIX shell and runs anywhere OpenZFS does —
 Linux and FreeBSD, local or over SSH. The remote end needs nothing but ZFS
 itself: file listing is POSIX `ls`, restores are `cp -a`, replication is
 `zfs send | zfs recv`. The static `zxplore-tui` binary has zero runtime
-dependencies.
+dependencies — and even cross-compiles for illumos
+(`GOOS=illumos go build`; builds clean, reports from real hardware welcome).
+The header tells you what it detected: `OpenZFS 2.4.3 · Fedora Linux 44`,
+falling back gracefully on stacks without `zfs version`.
 
 ## Documentation
 
