@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -418,5 +419,36 @@ func TestHostKeyAcceptNew(t *testing.T) {
 		t.Error("CHANGED host key must be refused (MITM)")
 	} else if !strings.Contains(err.Error(), "CHANGED") {
 		t.Errorf("changed-key error unclear: %v", err)
+	}
+}
+
+// The reinstall recovery: pin → refuse changed key → ForgetHostKey → the new
+// key pins cleanly. This is the "fiend got reinstalled again" path.
+func TestForgetHostKeyRecovery(t *testing.T) {
+	if _, err := exec.LookPath("ssh-keygen"); err != nil {
+		t.Skip("ssh-keygen not installed")
+	}
+	t.Setenv("HOME", t.TempDir())
+	addr := &net.TCPAddr{IP: net.IPv4(10, 0, 0, 2), Port: 22}
+	k1, k2 := testSSHKey(t), testSSHKey(t)
+	cb := hostKeyAcceptNew()
+	if err := cb("fiend:22", addr, k1); err != nil {
+		t.Fatal(err)
+	}
+	err := cb("fiend:22", addr, k2)
+	if err == nil {
+		t.Fatal("changed key must be refused")
+	}
+	if !HostKeyChangedErr(err) {
+		t.Errorf("refusal not classified as host-key-changed: %v", err)
+	}
+	if HostKeyChangedErr(errString("Permission denied (publickey)")) {
+		t.Error("plain auth failure must NOT classify as host-key-changed")
+	}
+	if err := ForgetHostKey(Server{Host: "fiend"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cb("fiend:22", addr, k2); err != nil {
+		t.Errorf("after forget, the reinstalled host's key must pin: %v", err)
 	}
 }

@@ -257,6 +257,42 @@ func SetupServer(s Server, password string) (Server, error) {
 	return s, TestServer(s)
 }
 
+// HostKeyChangedErr reports whether an error is the pinned-host-key-mismatch
+// refusal — from our own accept-new callback (in-process dial) or from the
+// ssh CLI. The GUI offers "forget & retry" ONLY for this case.
+func HostKeyChangedErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "CHANGED") ||
+		strings.Contains(msg, "REMOTE HOST IDENTIFICATION HAS CHANGED") ||
+		strings.Contains(msg, "Host key verification failed")
+}
+
+// ForgetHostKey removes the pinned known_hosts entries for a server — the
+// recovery path after a REINSTALL (fresh OS = fresh host key). Uses
+// ssh-keygen -R, which handles hashed entries and leaves a .old backup.
+// Only ever called after the operator confirms the reinstall explanation.
+func ForgetHostKey(s Server) error {
+	target := s.Host
+	if s.Port != 0 && s.Port != 22 {
+		target = fmt.Sprintf("[%s]:%d", s.Host, s.Port)
+	}
+	// -f explicitly: ssh-keygen expands ~ via the passwd database, NOT $HOME,
+	// so without it the wrong file gets edited under sudo/tests.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	kh := filepath.Join(home, ".ssh", "known_hosts")
+	out, err := exec.Command("ssh-keygen", "-f", kh, "-R", target).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("forget host key %s: %v: %s", target, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // hostKeyAcceptNew mirrors OpenSSH's StrictHostKeyChecking=accept-new for the
 // in-process ssh client: a host already in ~/.ssh/known_hosts must present the
 // SAME key (a changed key is refused — likely MITM); an unknown host is

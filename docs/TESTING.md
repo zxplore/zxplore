@@ -37,6 +37,7 @@ servers, favorites, and known_hosts are never touched.
 | Remote execution (accept-new host keys, every word shell-quoted, `sh -c` scripts survive, spacey names survive) | `TestRemoteCommandQuoted`, `TestRemoteShCScriptSurvives`, `TestMockRemoteRoundTrip` |
 | SSH options (port, identity file, ProxyJump) | `TestSSHOptsAndPrefix` |
 | Host-key pinning in the password bootstrap (record first contact, refuse changed key) | `TestHostKeyAcceptNew` |
+| Reinstall recovery (changed key classified → ForgetHostKey → new key pins) | `TestForgetHostKeyRecovery` |
 | Snapshot file explorer (ls parsing, per-file versions across snapshots, directory listing) | `TestParseLsLine`, `TestFileVersionsAndListDir` |
 | Explorer pool→dataset chooser (browsable = mounted at a real path; pool roots/legacy excluded) | `TestMockListMounts` |
 | Restore plans (overwrite / alongside / directory merge) | `TestRestoreArgv` |

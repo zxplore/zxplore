@@ -311,10 +311,15 @@ func serverEditDialog(w fyne.Window, srv Server, isNew bool, onSaved func()) {
 		pw := widget.NewPasswordEntry()
 		pw.SetPlaceHolder("account password on the server")
 		var d dialog.Dialog
-		runAuth := func() {
+		var authAttempt func(offerForget bool)
+		authAttempt = func(offerForget bool) {
 			go func() {
 				err := AuthorizeKey(srv, pw.Text)
 				fyne.Do(func() {
+					if err != nil && offerForget && HostKeyChangedErr(err) {
+						offerHostKeyReset(w, srv, func() { authAttempt(false) })
+						return
+					}
 					if err != nil {
 						dialog.ShowError(err, w)
 					} else {
@@ -323,6 +328,7 @@ func serverEditDialog(w fyne.Window, srv Server, isNew bool, onSaved func()) {
 				})
 			}()
 		}
+		runAuth := func() { authAttempt(true) }
 		pw.OnSubmitted = func(string) { d.Hide(); runAuth() }
 		body := container.NewVBox(
 			widget.NewLabel("Password for "+srv.sshTarget()+" — used once to install the key, never stored:"),
@@ -377,10 +383,18 @@ func serverEditDialog(w fyne.Window, srv Server, isNew bool, onSaved func()) {
 				}
 				runSetup()
 			}, w)
-		runSetup = func() {
+		// attempt runs the one-shot setup; on the pinned-key-changed refusal it
+		// offers ONE forget-and-retry (expected after a reinstall) — with the
+		// operator's explicit go-ahead, never silently.
+		var attempt func(offerForget bool)
+		attempt = func(offerForget bool) {
 			go func() {
 				s2, err := SetupServer(srv, pw.Text)
 				fyne.Do(func() {
+					if err != nil && offerForget && HostKeyChangedErr(err) {
+						offerHostKeyReset(w, srv, func() { attempt(false) })
+						return
+					}
 					if err != nil {
 						dialog.ShowError(err, w)
 						return
@@ -397,6 +411,7 @@ func serverEditDialog(w fyne.Window, srv Server, isNew bool, onSaved func()) {
 				})
 			}()
 		}
+		runSetup = func() { attempt(true) }
 		d.Resize(fyne.NewSize(540, 180))
 		d.Show()
 		w.Canvas().Focus(pw) // the field is ready to type into immediately
@@ -434,6 +449,28 @@ func serverEditDialog(w fyne.Window, srv Server, isNew bool, onSaved func()) {
 	}, w)
 	d.Resize(fyne.NewSize(660, 560))
 	d.Show()
+}
+
+// offerHostKeyReset explains a pinned-host-key mismatch and, with explicit
+// consent, forgets the stale entry and retries — the reinstall recovery path.
+// Refusing silently would strand every reinstalled box; forgetting silently
+// would gut the pinning. So: explain, ask, then act.
+func offerHostKeyReset(w fyne.Window, srv Server, retry func()) {
+	dialog.ShowConfirm("Host key changed",
+		"The host key of "+srv.sshTarget()+" no longer matches the one pinned in known_hosts.\n\n"+
+			"EXPECTED if this server was reinstalled — a fresh OS generates a fresh key.\n"+
+			"If you did NOT reinstall it, cancel and investigate before typing any password.\n\n"+
+			"Forget the old key and continue?",
+		func(ok bool) {
+			if !ok {
+				return
+			}
+			if err := ForgetHostKey(srv); err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			retry()
+		}, w)
 }
 
 // showPublicKey displays a public key in a read-only field for copy/paste (so it
