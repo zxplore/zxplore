@@ -1,0 +1,42 @@
+# ci.yml — vet + test both build flavors, build both binaries, and prove the
+# static TUI cross-compiles for the other OpenZFS platforms. The test suite
+# needs no real pool (mock CLI — see docs/TESTING.md).
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+      - name: GUI build dependencies (cgo + GL + X/Wayland + fontconfig)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc pkg-config libgl1-mesa-dev xorg-dev \
+            libwayland-dev libxkbcommon-dev libfontconfig1-dev
+      - name: gofmt clean
+        run: test -z "$(gofmt -l .)"
+      - name: Vet + test (both flavors)
+        run: make test
+      - name: Build both binaries
+        run: make build
+
+  cross:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+      - name: Static TUI cross-compiles for FreeBSD and illumos
+        run: |
+          CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go build -o /dev/null .
+          CGO_ENABLED=0 GOOS=illumos GOARCH=amd64 go build -o /dev/null .
