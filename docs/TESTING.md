@@ -46,6 +46,8 @@ servers, favorites, and known_hosts are never touched.
 | Platform detection (`zfs version`, header chip) | `TestMockVersionAndPlatform` |
 | Empty-host guidance (no ZFS / no pools / OK) | `TestMockDiagnoseHost`, `TestWelcomeText` |
 | Saved servers (upsert/delete/persist, key path sanitizing, Host mapping) | `TestServerStore` |
+| One-shot setup (generate key → skip authorize when key works → demand password when it doesn't) | `TestMockSetupServer`, `TestMockSetupServerNeedsPassword` |
+| Actionable auth errors (agent spray / unauthorized key → next step) | `TestFriendlySSH` |
 | Favorites (parse targets, dedup, cap, persist) | `TestParseTarget`, `TestAddFavoriteDedupAndCap`, `TestFavoritesPersistence` |
 | Version stamp (`0.1.0 b<N>`) | `TestVersionFull` |
 | Shell quoting (hostile names inert) | `TestShellQuote`, `TestRunReplicateQuoting` |

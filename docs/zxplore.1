@@ -170,7 +170,13 @@ costs no space, then prune the snapshot itself.
 The intended flow is key-first: a password crosses the wire exactly once,
 to install the key, and is never stored.
 .Pp
-In the app:
+The one-step path is
+.Ic Set up & save
+in the server editor: it generates a key when the server has none, skips
+authorization when the key already works, otherwise installs it with the
+one-time password, verifies ZFS is reachable, and saves the server.
+.Pp
+The same steps individually, when you want control:
 .Bl -enum -offset indent -compact
 .It
 .Ic Servers\(->New :

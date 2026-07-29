@@ -8,6 +8,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -448,6 +449,40 @@ func TestFileVersionsAndListDir(t *testing.T) {
 	entries, err := ListDir(LocalHost(), filepath.Join(mp, ".zfs/snapshot/daily-1/etc"))
 	if err != nil || len(entries) != 1 || entries[0].Name != "pf.conf" || entries[0].Dir {
 		t.Errorf("entries=%v err=%v", entries, err)
+	}
+}
+
+// ── one-shot server setup ───────────────────────────────────────────────────
+
+func TestMockSetupServer(t *testing.T) {
+	if _, err := exec.LookPath("ssh-keygen"); err != nil {
+		t.Skip("ssh-keygen not installed")
+	}
+	stdMock(t) // mock ssh succeeds → key counts as already authorized
+	s, err := SetupServer(Server{Name: "unit box", Host: "mock", User: "zexp"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.KeyPath == "" {
+		t.Fatal("SetupServer must generate and record a key")
+	}
+	if _, err := os.Stat(s.KeyPath); err != nil {
+		t.Errorf("generated key missing on disk: %v", err)
+	}
+	if pub, err := PublicKey(s.KeyPath); err != nil || !strings.HasPrefix(pub, "ssh-ed25519 ") {
+		t.Errorf("public key not derivable: %q %v", pub, err)
+	}
+}
+
+func TestMockSetupServerNeedsPassword(t *testing.T) {
+	if _, err := exec.LookPath("ssh-keygen"); err != nil {
+		t.Skip("ssh-keygen not installed")
+	}
+	m := newMock(t)
+	m.script("ssh", `echo "u@mock: Permission denied (publickey,password)." >&2; exit 255`)
+	_, err := SetupServer(Server{Name: "unit box2", Host: "mock", User: "u"}, "")
+	if err == nil || !strings.Contains(err.Error(), "password") {
+		t.Errorf("unauthorized key with no password must ask for one, got %v", err)
 	}
 }
 

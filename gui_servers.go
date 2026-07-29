@@ -343,8 +343,45 @@ func serverEditDialog(w fyne.Window, srv Server, isNew bool, onSaved func()) {
 		}()
 	})
 
+	// ⚡ the turnkey path: generate key (if needed) + authorize + test + save,
+	// one password prompt, one click. The buttons above remain for piecemeal
+	// setups (own key, manual authorize on password-less servers).
+	setupBtn := widget.NewButtonWithIcon("⚡ Set up & save", theme.MediaPlayIcon(), func() {
+		if !nameOK() {
+			return
+		}
+		pw := widget.NewPasswordEntry()
+		pw.SetPlaceHolder("leave empty if the key is already authorized")
+		dialog.ShowForm("Set up "+srv.sshTarget(), "Set up", "Cancel",
+			[]*widget.FormItem{widget.NewFormItem("Password (used once, not stored)", pw)},
+			func(ok bool) {
+				if !ok {
+					return
+				}
+				go func() {
+					s2, err := SetupServer(srv, pw.Text)
+					fyne.Do(func() {
+						if err != nil {
+							dialog.ShowError(err, w)
+							return
+						}
+						srv = s2
+						refreshKey()
+						if err := SaveServers(UpsertServer(LoadServers(), srv)); err != nil {
+							dialog.ShowError(err, w)
+							return
+						}
+						onSaved()
+						dialog.ShowInformation("Ready",
+							"✓ key in place\n✓ authorized on "+srv.sshTarget()+"\n✓ ZFS visible\n\nServer saved — Connect away.", w)
+					})
+				}()
+			}, w)
+	})
+	setupBtn.Importance = widget.HighImportance
+
 	keyRow := container.NewHBox(genBtn, pasteBtn, fileBtn, showKeyBtn)
-	actionRow := container.NewHBox(authBtn, testBtn)
+	actionRow := container.NewHBox(setupBtn, authBtn, testBtn)
 	form := widget.NewForm(
 		widget.NewFormItem("Name", name),
 		widget.NewFormItem("Host", host),

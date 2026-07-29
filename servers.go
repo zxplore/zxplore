@@ -230,6 +230,33 @@ func AuthorizeKey(s Server, password string) error {
 	return nil
 }
 
+// SetupServer makes a server connectable in ONE step: ensures a key exists
+// (generating a fresh ed25519 when none is set), checks whether that key
+// already works, and only if it doesn't, uses the one-time password to
+// install it — then verifies ZFS is actually reachable. Returns the server
+// with its (possibly new) KeyPath so the caller can persist it. The password
+// is used at most once and never stored; "" is fine when the key might
+// already be authorized.
+func SetupServer(s Server, password string) (Server, error) {
+	if s.KeyPath == "" {
+		kp, err := GenerateKey(s.Name)
+		if err != nil {
+			return s, err
+		}
+		s.KeyPath = kp
+	}
+	if err := TestServer(s); err == nil {
+		return s, nil // key already authorized, ZFS visible — nothing to do
+	}
+	if password == "" {
+		return s, fmt.Errorf("the key isn't authorized on %s yet — the one-time password is needed to install it", s.sshTarget())
+	}
+	if err := AuthorizeKey(s, password); err != nil {
+		return s, err
+	}
+	return s, TestServer(s)
+}
+
 // hostKeyAcceptNew mirrors OpenSSH's StrictHostKeyChecking=accept-new for the
 // in-process ssh client: a host already in ~/.ssh/known_hosts must present the
 // SAME key (a changed key is refused — likely MITM); an unknown host is
