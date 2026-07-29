@@ -300,7 +300,7 @@ func serverEditDialog(w fyne.Window, srv Server, isNew bool, onSaved func()) {
 		showPublicKey(w, pub)
 	})
 
-	authBtn := widget.NewButton("Authorize on server (password)…", func() {
+	authBtn := widget.NewButton("Authorize (password)…", func() {
 		if !nameOK() {
 			return
 		}
@@ -309,25 +309,36 @@ func serverEditDialog(w fyne.Window, srv Server, isNew bool, onSaved func()) {
 			return
 		}
 		pw := widget.NewPasswordEntry()
-		dialog.ShowForm("Authorize key on "+srv.sshTarget(), "Authorize", "Cancel",
-			[]*widget.FormItem{widget.NewFormItem("Password (used once, not stored)", pw)},
+		pw.SetPlaceHolder("account password on the server")
+		var d dialog.Dialog
+		runAuth := func() {
+			go func() {
+				err := AuthorizeKey(srv, pw.Text)
+				fyne.Do(func() {
+					if err != nil {
+						dialog.ShowError(err, w)
+					} else {
+						dialog.ShowInformation("Authorized", "Public key installed on "+srv.sshTarget()+" ✓\nKey login should work now — try Test.", w)
+					}
+				})
+			}()
+		}
+		pw.OnSubmitted = func(string) { d.Hide(); runAuth() }
+		body := container.NewVBox(
+			widget.NewLabel("Password for "+srv.sshTarget()+" — used once to install the key, never stored:"),
+			pw,
+		)
+		d = dialog.NewCustomConfirm("Authorize key on "+srv.sshTarget(), "Authorize", "Cancel", body,
 			func(ok bool) {
-				if !ok {
-					return
+				if ok {
+					runAuth()
 				}
-				go func() {
-					err := AuthorizeKey(srv, pw.Text)
-					fyne.Do(func() {
-						if err != nil {
-							dialog.ShowError(err, w)
-						} else {
-							dialog.ShowInformation("Authorized", "Public key installed on "+srv.sshTarget()+" ✓\nKey login should work now — try Test.", w)
-						}
-					})
-				}()
 			}, w)
+		d.Resize(fyne.NewSize(540, 180))
+		d.Show()
+		w.Canvas().Focus(pw)
 	})
-	testBtn := widget.NewButton("Test connection", func() {
+	testBtn := widget.NewButton("Test", func() {
 		if !nameOK() {
 			return
 		}
@@ -352,31 +363,43 @@ func serverEditDialog(w fyne.Window, srv Server, isNew bool, onSaved func()) {
 		}
 		pw := widget.NewPasswordEntry()
 		pw.SetPlaceHolder("leave empty if the key is already authorized")
-		dialog.ShowForm("Set up "+srv.sshTarget(), "Set up", "Cancel",
-			[]*widget.FormItem{widget.NewFormItem("Password (used once, not stored)", pw)},
+		var d dialog.Dialog
+		var runSetup func()
+		pw.OnSubmitted = func(string) { d.Hide(); runSetup() }
+		body := container.NewVBox(
+			widget.NewLabel("Password for "+srv.sshTarget()+" — used once to install the key, never stored:"),
+			pw,
+		)
+		d = dialog.NewCustomConfirm("Set up "+srv.sshTarget(), "Set up", "Cancel", body,
 			func(ok bool) {
 				if !ok {
 					return
 				}
-				go func() {
-					s2, err := SetupServer(srv, pw.Text)
-					fyne.Do(func() {
-						if err != nil {
-							dialog.ShowError(err, w)
-							return
-						}
-						srv = s2
-						refreshKey()
-						if err := SaveServers(UpsertServer(LoadServers(), srv)); err != nil {
-							dialog.ShowError(err, w)
-							return
-						}
-						onSaved()
-						dialog.ShowInformation("Ready",
-							"✓ key in place\n✓ authorized on "+srv.sshTarget()+"\n✓ ZFS visible\n\nServer saved — Connect away.", w)
-					})
-				}()
+				runSetup()
 			}, w)
+		runSetup = func() {
+			go func() {
+				s2, err := SetupServer(srv, pw.Text)
+				fyne.Do(func() {
+					if err != nil {
+						dialog.ShowError(err, w)
+						return
+					}
+					srv = s2
+					refreshKey()
+					if err := SaveServers(UpsertServer(LoadServers(), srv)); err != nil {
+						dialog.ShowError(err, w)
+						return
+					}
+					onSaved()
+					dialog.ShowInformation("Ready",
+						"✓ key in place\n✓ authorized on "+srv.sshTarget()+"\n✓ ZFS visible\n\nServer saved — Connect away.", w)
+				})
+			}()
+		}
+		d.Resize(fyne.NewSize(540, 180))
+		d.Show()
+		w.Canvas().Focus(pw) // the field is ready to type into immediately
 	})
 	setupBtn.Importance = widget.HighImportance
 
@@ -409,7 +432,7 @@ func serverEditDialog(w fyne.Window, srv Server, isNew bool, onSaved func()) {
 		}
 		onSaved()
 	}, w)
-	d.Resize(fyne.NewSize(620, 520))
+	d.Resize(fyne.NewSize(660, 560))
 	d.Show()
 }
 
