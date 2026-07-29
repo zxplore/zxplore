@@ -273,5 +273,22 @@ func TestServer(s Server) error {
 		args = append(args, "-d", "0", s.Path)
 	}
 	_, err := run(h.command("zfs", args...))
+	return friendlySSH(err, s)
+}
+
+// friendlySSH turns a raw ssh auth failure into the NEXT STEP. Connections
+// are key-first by design (BatchMode, no tty): the password is only ever
+// used by "Authorize on server", once, to install the key.
+func friendlySSH(err error, s Server) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "Too many authentication failures"):
+		return fmt.Errorf("%v\n\nYour ssh-agent offered too many keys before the right one.\nAssign a key to this server (Generate key / Use key file),\nthen click “Authorize on server”.", err)
+	case strings.Contains(msg, "Permission denied"):
+		return fmt.Errorf("%v\n\nThe key isn't authorized on %s yet.\nClick “Authorize on server (password)” — the password is used once\nto install the key and never stored. Panes always connect by key;\ninteractive password login is not used.", err, s.sshTarget())
+	}
 	return err
 }

@@ -44,15 +44,22 @@ type Host struct {
 }
 
 // sshOpts returns the extra ssh args for this host: a non-default port, an
-// explicit identity file (IdentitiesOnly so only that key is offered), and a
-// ProxyJump chain (bastion / jump hosts, like an SSH client's -J).
+// explicit identity file, and a ProxyJump chain (bastion / jump hosts, like
+// an SSH client's -J).
+//
+// IdentitiesOnly is ALWAYS set: without it, ssh offers every ssh-agent key in
+// turn, and an agent holding more keys than the server's MaxAuthTries (6 by
+// default) fails every connection with "Too many authentication failures"
+// before the right key is ever tried. With it, ssh presents only this
+// server's key — or, when none is configured, the default ~/.ssh identities
+// and any IdentityFile lines from ssh_config.
 func (h Host) sshOpts() []string {
-	var o []string
+	o := []string{"-o", "IdentitiesOnly=yes"}
 	if h.Port != 0 && h.Port != 22 {
 		o = append(o, "-p", strconv.Itoa(h.Port))
 	}
 	if h.KeyPath != "" {
-		o = append(o, "-i", h.KeyPath, "-o", "IdentitiesOnly=yes")
+		o = append(o, "-i", h.KeyPath)
 	}
 	if h.Jump != "" {
 		o = append(o, "-o", "ProxyJump="+h.Jump)

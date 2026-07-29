@@ -96,7 +96,36 @@ func TestSSHOptsAndPrefix(t *testing.T) {
 	if !strings.Contains(pfx, "'root@nyc'") {
 		t.Errorf("sshPrefix target unquoted: %s", pfx)
 	}
+	// IdentitiesOnly must be present even with NO key configured — a loaded
+	// ssh-agent otherwise spends MaxAuthTries on unrelated keys and every
+	// connection dies with "Too many authentication failures".
+	if got := strings.Join((Host{SSH: "u@h"}).sshOpts(), " "); !strings.Contains(got, "IdentitiesOnly=yes") {
+		t.Errorf("keyless host missing IdentitiesOnly: %q", got)
+	}
 }
+
+func TestFriendlySSH(t *testing.T) {
+	s := Server{Name: "nyc", Host: "h", User: "zexp"}
+	if friendlySSH(nil, s) != nil {
+		t.Error("nil must pass through")
+	}
+	err := friendlySSH(errString("Received disconnect: Too many authentication failures"), s)
+	if err == nil || !strings.Contains(err.Error(), "Authorize on server") {
+		t.Errorf("agent-spray error not actionable: %v", err)
+	}
+	err = friendlySSH(errString("zexp@h: Permission denied (publickey,password)"), s)
+	if err == nil || !strings.Contains(err.Error(), "used once") {
+		t.Errorf("permission-denied error not actionable: %v", err)
+	}
+	plain := errString("cannot open 'tank': dataset does not exist")
+	if friendlySSH(plain, s) != plain {
+		t.Error("non-auth errors must pass through untouched")
+	}
+}
+
+type errString string
+
+func (e errString) Error() string { return string(e) }
 
 func TestHostLabel(t *testing.T) {
 	if LocalHost().Label() != "local" {

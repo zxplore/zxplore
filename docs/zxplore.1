@@ -122,10 +122,11 @@ When connecting,
 invokes ssh with
 .Fl o Cm BatchMode=yes ,
 .Fl o Cm ConnectTimeout=8 ,
-and, when a key is configured,
-.Fl i Ar keyfile
-plus
-.Fl o Cm IdentitiesOnly=yes .
+.Fl o Cm IdentitiesOnly=yes
+(always \(em so a loaded ssh-agent cannot exhaust the server's
+.Cm MaxAuthTries
+budget with unrelated keys), and, when a key is configured,
+.Fl i Ar keyfile .
 Because it is plain ssh, everything in your
 .Pa ~/.ssh/config
 still applies \(em including
