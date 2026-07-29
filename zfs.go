@@ -78,6 +78,14 @@ func (h Host) Label() string {
 	return h.SSH
 }
 
+// User returns the ssh user of a remote host ("" when local or implicit).
+func (h Host) User() string {
+	if i := strings.IndexByte(h.SSH, '@'); i > 0 {
+		return h.SSH[:i]
+	}
+	return ""
+}
+
 // localCmd builds a local *exec.Cmd with a C message locale, so error
 // classification (needsElevation) sees untranslated strings whatever the
 // desktop locale is. Every local exec goes through here.
@@ -1217,6 +1225,41 @@ func ReplicatePipeline(srcHost Host, srcSnap string, dstHost Host, dstPath strin
 		recv = sshPrefix(dstHost) + " " + shellQuote(recv)
 	}
 	return send + " | " + recv
+}
+
+// ── replication delegation ───────────────────────────────────────────────────
+// The zfs allow sets each side of a pipeline needs when it runs as a NON-root
+// user. The local leg runs under pkexec (root), so only remote ends need this.
+const (
+	ReplSendPerms = "send,snapshot,hold,bookmark,mount"
+	ReplRecvPerms = "create,receive,mount,canmount,readonly"
+)
+
+// GrantCommand is the literal command GrantReplicationPerms runs — shown to
+// the operator before anything executes.
+func GrantCommand(user, perms, dataset string) string {
+	return "zfs allow -u " + user + " " + perms + " " + dataset
+}
+
+// GrantReplicationPerms delegates perms on dataset to user at h. Locally it
+// elevates via pkexec; remotely it runs sudo with the password on stdin
+// (never argv, never stored) — the connected account must be a sudoer.
+// Descendants inherit, so granting on the selected dataset covers the tree.
+func GrantReplicationPerms(h Host, user, perms, dataset, sudoPassword string) error {
+	argv := []string{"zfs", "allow", "-u", user, perms, dataset}
+	auditLog(h, argv)
+	if h.SSH == "" {
+		if out, err := localCmd("pkexec", argv...).CombinedOutput(); err != nil {
+			return fmt.Errorf("%s: %v: %s", strings.Join(argv, " "), err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	cmd := h.command("sudo", append([]string{"-S", "-p", "", "--"}, argv...)...)
+	cmd.Stdin = strings.NewReader(sudoPassword + "\n")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("sudo zfs allow on %s: %v: %s", h.Label(), err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // SnapshotNow takes an ad-hoc snapshot of a dataset and returns its full name.

@@ -452,6 +452,48 @@ func TestFileVersionsAndListDir(t *testing.T) {
 	}
 }
 
+// ── replication delegation (zfs allow grants) ───────────────────────────────
+
+func TestMockGrantReplicationPerms(t *testing.T) {
+	m := newMock(t)
+	secrets := filepath.Join(t.TempDir(), "sudo-stdin")
+	t.Setenv("ZX_SECRETS", secrets)
+	m.script("zfs", `echo "zfs $*" >> "$ZX_CMDLOG"; exit 0`)
+	m.script("pkexec", pkexecFixture)
+	m.script("ssh", sshFixture)
+	m.script("sudo", `echo "sudo $*" >> "$ZX_CMDLOG"; cat > "$ZX_SECRETS"; exit 0`)
+
+	// Local: elevates via pkexec, no password involved.
+	if err := GrantReplicationPerms(LocalHost(), "zexp", ReplRecvPerms, "tank/backups", ""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(m.log(), "pkexec zfs allow -u zexp "+ReplRecvPerms+" tank/backups") {
+		t.Errorf("local grant not elevated via pkexec:\n%s", m.log())
+	}
+
+	// Remote: sudo -S with the password on stdin, never on the command line.
+	h := Host{SSH: "admin@fiend"}
+	if err := GrantReplicationPerms(h, "admin", ReplSendPerms, "rpool/home/admin", "Passw0rd"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(m.log(), "sudo -S -p  -- zfs allow -u admin "+ReplSendPerms+" rpool/home/admin") {
+		t.Errorf("remote grant argv wrong:\n%s", m.log())
+	}
+	if got, _ := os.ReadFile(secrets); string(got) != "Passw0rd\n" {
+		t.Errorf("sudo password must arrive on stdin, got %q", got)
+	}
+	if strings.Contains(m.log(), "Passw0rd") {
+		t.Error("sudo password leaked into a command line")
+	}
+	audit, _ := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".local/state/zxplore/audit.log"))
+	if !strings.Contains(string(audit), "zfs allow -u admin") {
+		t.Error("grant not audited")
+	}
+	if strings.Contains(string(audit), "Passw0rd") {
+		t.Error("sudo password leaked into the audit log")
+	}
+}
+
 // ── one-shot server setup ───────────────────────────────────────────────────
 
 func TestMockSetupServer(t *testing.T) {

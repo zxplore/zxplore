@@ -34,6 +34,7 @@ servers, favorites, and known_hosts are never touched.
 | Locale-proof elevation detection (`LC_ALL=C` on local commands) | `TestLocalCommandArgv`, `TestNeedsElevation` |
 | Audit log (every mutation, tab format, no secrets) | `TestMockAuditLog`, `TestMockPassphraseStdin` |
 | Replication pipeline (raw `-w` for encrypted, incremental base, resume token, quoted remote legs) | `TestMockReplicatePipeline`, `TestRunReplicateQuoting` |
+| Replication delegation grants (pkexec local, remote sudo with password on stdin, audited without secrets) | `TestMockGrantReplicationPerms`, `TestGrantCommand` |
 | Remote execution (accept-new host keys, every word shell-quoted, `sh -c` scripts survive, spacey names survive) | `TestRemoteCommandQuoted`, `TestRemoteShCScriptSurvives`, `TestMockRemoteRoundTrip` |
 | SSH options (port, identity file, ProxyJump) | `TestSSHOptsAndPrefix` |
 | Host-key pinning in the password bootstrap (record first contact, refuse changed key) | `TestHostKeyAcceptNew` |

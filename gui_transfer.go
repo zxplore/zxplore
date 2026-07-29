@@ -138,7 +138,49 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 		}
 	}
 
-	replicate := func(src, dst *xferPane) {
+	var replicate func(src, dst *xferPane)
+
+	// offerGrant explains a permission failure on a remote end and, with the
+	// account's sudo password (used once, on stdin, never stored), delegates
+	// the exact zfs allow set that side needs — then retries the replication.
+	offerGrant := func(p *xferPane, dataset, perms, role string, retry func()) {
+		u := p.host.User()
+		if u == "" {
+			u = "the connected user"
+		}
+		grant := GrantCommand(u, perms, dataset)
+		pw := widget.NewPasswordEntry()
+		pw.SetPlaceHolder("sudo password for " + u + " on " + p.host.Label())
+		var gd dialog.Dialog
+		runGrant := func() {
+			go func() {
+				err := GrantReplicationPerms(p.host, u, perms, dataset, pw.Text)
+				fyne.Do(func() {
+					if err != nil {
+						dialog.ShowError(err, w)
+						return
+					}
+					retry()
+				})
+			}()
+		}
+		pw.OnSubmitted = func(string) { gd.Hide(); runGrant() }
+		body := container.NewVBox(
+			widget.NewLabel("ZFS refused: "+u+" isn't delegated to "+role+" on "+p.host.Label()+".\n\nGrant it? Runs exactly (as root, once):\n  sudo "+grant+"\n\nDescendant datasets inherit the grant."),
+			pw,
+		)
+		gd = dialog.NewCustomConfirm("Replication permissions — "+p.host.Label(), "Grant & retry", "Cancel", body,
+			func(ok bool) {
+				if ok {
+					runGrant()
+				}
+			}, w)
+		gd.Resize(fyne.NewSize(620, 260))
+		gd.Show()
+		w.Canvas().Focus(pw)
+	}
+
+	replicate = func(src, dst *xferPane) {
 		if !guiMutOK(w) {
 			return
 		}
@@ -158,6 +200,11 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 		} else if sn, err := SnapshotNow(src.host, s, "zx-"+time.Now().Format("20060102-150405")); err == nil {
 			snap = sn
 		} else {
+			if src.host.SSH != "" && needsElevation(err.Error()) {
+				offerGrant(src, s, ReplSendPerms, "snapshot/send "+s,
+					func() { replicate(src, dst) })
+				return
+			}
 			dialog.ShowError(fmt.Errorf("snapshot failed: %v", err), w)
 			return
 		}
@@ -168,7 +215,8 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 		dstPath := d + "/" + leaf
 		pipeline := ReplicatePipeline(src.host, snap, dst.host, dstPath)
 		dialog.ShowConfirm("Replicate",
-			fmt.Sprintf("Send\n  %s\nto\n  %s:%s\n\nRuns exactly (root):\n  %s", snap, dst.host.Label(), dstPath, pipeline),
+			fmt.Sprintf("Send\n  %s\nto\n  %s:%s\n\nRuns exactly (root):\n  %s\n\nOwnership travels inside the stream as numeric UIDs — the replica is\nbit-exact and readonly; no matching account is needed on the target.",
+				snap, dst.host.Label(), dstPath, pipeline),
 			func(ok bool) {
 				if !ok {
 					return
@@ -179,6 +227,25 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 					err := RunReplicate(pipeline)
 					fyne.Do(func() {
 						if err != nil {
+							// A permission refusal on a remote end is a missing
+							// zfs allow — offer the grant and retry.
+							if needsElevation(err.Error()) {
+								if src.host.SSH != "" && strings.Contains(err.Error(), "send") {
+									offerGrant(src, s, ReplSendPerms, "snapshot/send "+s,
+										func() { replicate(src, dst) })
+									return
+								}
+								if dst.host.SSH != "" {
+									offerGrant(dst, d, ReplRecvPerms, "receive into "+d,
+										func() { replicate(src, dst) })
+									return
+								}
+								if src.host.SSH != "" {
+									offerGrant(src, s, ReplSendPerms, "snapshot/send "+s,
+										func() { replicate(src, dst) })
+									return
+								}
+							}
 							dialog.ShowError(err, w)
 							return
 						}

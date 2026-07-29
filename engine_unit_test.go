@@ -135,6 +135,19 @@ func TestHostLabel(t *testing.T) {
 	if (Host{SSH: "u@h"}).Label() != "u@h" {
 		t.Error("remote label")
 	}
+	if (Host{SSH: "admin@fiend"}).User() != "admin" {
+		t.Error("User() must extract the ssh user")
+	}
+	if (Host{SSH: "fiend"}).User() != "" || LocalHost().User() != "" {
+		t.Error("User() must be empty for implicit/local")
+	}
+}
+
+func TestGrantCommand(t *testing.T) {
+	want := "zfs allow -u admin " + ReplSendPerms + " rpool/home/admin"
+	if got := GrantCommand("admin", ReplSendPerms, "rpool/home/admin"); got != want {
+		t.Errorf("GrantCommand = %q, want %q", got, want)
+	}
 }
 
 // ── elevation classification ────────────────────────────────────────────────
