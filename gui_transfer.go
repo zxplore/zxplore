@@ -16,7 +16,6 @@ package main
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -175,10 +174,12 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 					return
 				}
 				go func() {
-					out, err := exec.Command("pkexec", "sh", "-c", pipeline).CombinedOutput()
+					// RunReplicate — not a raw pkexec — so the pipeline is
+					// audit-logged like every other mutation.
+					err := RunReplicate(pipeline)
 					fyne.Do(func() {
 						if err != nil {
-							dialog.ShowError(fmt.Errorf("replicate failed: %v\n%s", err, string(out)), w)
+							dialog.ShowError(err, w)
 							return
 						}
 						dst.reload()
@@ -196,9 +197,11 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 	btnRL := widget.NewButton("Replicate right → left", func() { replicate(right, left) })
 	bar := container.NewCenter(container.NewHBox(btnLR, widget.NewLabel("        "), btnRL))
 
+	// Same lifted card panels as the Browser/Explorer panes, so every tab
+	// reads as one console.
 	split := container.NewHSplit(
-		left.view(goLocal(left), connectVia(left)),
-		right.view(goLocal(right), connectVia(right)),
+		card(left.view(goLocal(left), connectVia(left))),
+		card(right.view(goLocal(right), connectVia(right))),
 	)
 	split.SetOffset(0.5)
 	return container.NewBorder(nil, bar, nil, nil, split)

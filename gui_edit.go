@@ -78,7 +78,7 @@ func snapshotActionDialog(host Host, snap string, w fyne.Window, onDone func()) 
 			w.Canvas().Focus(e)
 		}},
 		{"Browse / restore files in this snapshot…", func() {
-			showSnapshotExplorer(host, ds, short)
+			openExplorerTab(host, ds, short)
 		}},
 		{"What changed since this snapshot — zfs diff…", func() {
 			showDiffDialog(host, ds, w, short)

@@ -31,22 +31,26 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-//go:embed assets/zxplore.svg
+// The dark terminal-steel mark (animated cursor in SVG-capable viewers) is the
+// app icon everywhere: window, dock, and the front page. The light teal tile
+// stays in assets/ for the site.
+//
+//go:embed assets/zxplore-tui.svg
 var iconSVG []byte
 
 //go:embed docs/zxplore.1
 var manPage []byte
 
-// repoURL / siteURL back the top-right links. repoURL points at the project site
-// (operator owns zxplore.dev); there's no public git remote yet.
+// repoURL backs the top-right version link (source + issues). siteURL backs
+// the "powered by kldload.com" credit on the front page.
 const (
-	repoURL = "https://zxplore.dev"
+	repoURL = "https://github.com/zxplore/zxplore"
 	siteURL = "https://kldload.com"
 )
 
 // helpHints is the tmux-style status line along the bottom. Keep it TRUE — only
 // keys/gestures that actually work, so it stays a contract, not decoration.
-const helpHints = "  F1 browser   F2 transfer   ? manual    ↑↓ move   Tab pane   PgUp/PgDn page   Ctrl+F or / find   Enter/right-click = actions   Alt+Q quit  "
+const helpHints = "  F1 browser   F2 transfer   F3 explorer   ? manual    ↑↓ move   Tab pane   PgUp/PgDn page   Ctrl+F or / find   Enter/right-click = actions   Alt+Q quit  "
 
 // navPage is how many rows PgUp/PgDn jump.
 const navPage = 12
@@ -215,6 +219,41 @@ func paneCard(content fyne.CanvasObject) fyne.CanvasObject {
 	return container.NewStack(r, container.NewPadded(content))
 }
 
+// tabTint colors one tab-bar button inside a ThemeOverride — old-school ANSI
+// BBS contrast: the fill (selected) and hover wash are MUTED accent, the text
+// stays the BRIGHT accent, so the label pops instead of drowning in its own
+// color. This is why the tab bar is hand-built — AppTabs can neither color
+// nor space its headers.
+type tabTint struct {
+	fyne.Theme
+	a accentPair
+}
+
+func (t tabTint) Color(name fyne.ThemeColorName, v fyne.ThemeVariant) color.Color {
+	ac := t.a.light
+	if v == theme.VariantDark {
+		ac = t.a.dark
+	}
+	switch name {
+	case theme.ColorNameForeground, theme.ColorNameForegroundOnPrimary:
+		return ac // bright accent text, selected or not
+	case theme.ColorNamePrimary: // selected fill: muted accent under bright text
+		if v == theme.VariantDark {
+			return color.NRGBA{ac.R / 4, ac.G / 4, ac.B / 4, 0xff}
+		}
+		return color.NRGBA{
+			uint8((int(ac.R) + 3*255) / 4), uint8((int(ac.G) + 3*255) / 4),
+			uint8((int(ac.B) + 3*255) / 4), 0xff}
+	case theme.ColorNameHover: // mouseover: translucent accent wash
+		return color.NRGBA{ac.R, ac.G, ac.B, 0x2e}
+	}
+	return t.Theme.Color(name, v)
+}
+
+// openExplorerTab jumps to the F3 Explorer tab mounted on a dataset — set in
+// runGUI, called from the browser's right-click menu.
+var openExplorerTab func(h Host, dataset, source string)
+
 // blueAccent retints the primary color inside a ThemeOverride — used to make
 // the ✎ Edit button match the DETAILS pane's blue instead of the brand green.
 type blueAccent struct{ fyne.Theme }
@@ -355,22 +394,9 @@ func (l *navList) TypedKey(e *fyne.KeyEvent) {
 }
 
 // ── in-app manual ────────────────────────────────────────────────────────────
-// showManual renders the EMBEDDED man page in a dialog — the manual ships
-// inside the binary, so "?" works even where man/mandoc were never installed
-// (rendered nicely when they are, raw mdoc as the last resort).
-func showManual(w fyne.Window) {
-	go func() {
-		text := renderManual()
-		fyne.Do(func() {
-			lbl := widget.NewLabel(text)
-			lbl.TextStyle = fyne.TextStyle{Monospace: true}
-			lbl.Wrapping = fyne.TextWrapOff
-			d := dialog.NewCustom("zxplore(1) — manual", "Close", container.NewScroll(lbl), w)
-			d.Resize(fyne.NewSize(980, 700))
-			d.Show()
-		})
-	}()
-}
+// The manual ships EMBEDDED in the binary, so "?" works even where man/mandoc
+// were never installed (rendered nicely when they are, raw mdoc as the last
+// resort). It renders as the full-window front page — see runGUI.
 
 func renderManual() string {
 	tmp, err := os.CreateTemp("", "zxplore-man-*.1")
@@ -378,16 +404,55 @@ func renderManual() string {
 		_, _ = tmp.Write(manPage)
 		tmp.Close()
 		defer os.Remove(tmp.Name())
+		// No col(1) in the pipeline — overstrikes are stripped in Go, so the
+		// only external need is mandoc OR man, and neither is required.
 		for _, c := range []string{
-			"mandoc -Tutf8 -O width=96 " + tmp.Name() + " 2>/dev/null | col -bx",
-			"MANWIDTH=96 man -l " + tmp.Name() + " 2>/dev/null | col -bx",
+			"mandoc -Tutf8 -O width=100 " + tmp.Name() + " 2>/dev/null",
+			"MANWIDTH=100 man -l " + tmp.Name() + " 2>/dev/null",
 		} {
 			if out, err := exec.Command("sh", "-c", c).Output(); err == nil && len(out) > 200 {
-				return string(out)
+				return stripOverstrike(string(out))
 			}
 		}
 	}
 	return string(manPage)
+}
+
+// stripOverstrike removes nroff bold/underline overstrike pairs (c\bc, _\bc)
+// from rendered man output — the job col -bx used to do, done portably.
+var overstrikeRE = regexp.MustCompile(`.\x08`)
+
+func stripOverstrike(s string) string {
+	for i := 0; i < 4 && strings.Contains(s, "\x08"); i++ {
+		s = overstrikeRE.ReplaceAllString(s, "")
+	}
+	return strings.ReplaceAll(s, "\x08", "") // stray leading backspaces
+}
+
+// manHeadRE matches a man SECTION HEADER line (all caps, column 0).
+var manHeadRE = regexp.MustCompile(`^[A-Z][A-Z0-9 /()-]*$`)
+
+// manualSegments colors the rendered manual for RichText: section headers in
+// the dossier topic blue, body default foreground, all monospace so the
+// man(1) indentation survives.
+func manualSegments(text string) []widget.RichTextSegment {
+	mono := fyne.TextStyle{Monospace: true}
+	seg := func(s string, cn fyne.ThemeColorName, bold bool) *widget.TextSegment {
+		st := mono
+		st.Bold = bold
+		return &widget.TextSegment{Text: s, Style: widget.RichTextStyle{
+			Inline: true, TextStyle: st, ColorName: cn}}
+	}
+	var out []widget.RichTextSegment
+	for _, line := range strings.Split(text, "\n") {
+		if line != "" && manHeadRE.MatchString(strings.TrimRight(line, " ")) {
+			out = append(out, seg(line, cnTopic, true))
+		} else {
+			out = append(out, seg(line, theme.ColorNameForeground, false))
+		}
+		out = append(out, seg("\n", theme.ColorNameForeground, false))
+	}
+	return out
 }
 
 // ── safety: read-only by default (parity with the TUI's :rw) ────────────────
@@ -580,6 +645,102 @@ func runGUI() {
 	poolsLabel := widget.NewLabel("… scanning pools")
 	poolsLabel.TextStyle = fyne.TextStyle{Monospace: true}
 
+	// Explorer tab state — declared before applyLoad so each scan can refresh
+	// the dataset picker; the page itself is assembled with the tab bar below.
+	explorerBody := container.NewStack(container.NewCenter(
+		widget.NewLabel("Pick a zpool above (or right-click a dataset in the Browser)\nto walk its files across every snapshot.")))
+	var explorerFocus fyne.Focusable
+	explorerSel := widget.NewSelect(nil, nil)
+	explorerSel.PlaceHolder = "zpool…"
+	// Picking a pool first shows its DATASETS with mount state — a pool root
+	// is often none/canmount=off (rpool, zxdemo), so there are no files AT the
+	// root; the browsable filesystems are the children. Descend from there.
+	var showPoolDatasets func(pool string)
+	mountExplorer := func(h Host, dataset, source string) {
+		view, focus := snapExplorerView(w, h, dataset, source)
+		explorerFocus = focus
+		content := view
+		if h.SSH == "" { // a back row returns to the pool's dataset list
+			pool := dataset
+			if i := strings.IndexByte(pool, '/'); i >= 0 {
+				pool = pool[:i]
+			}
+			back := widget.NewButtonWithIcon("« "+pool+" datasets", theme.NavigateBackIcon(),
+				func() { showPoolDatasets(pool) })
+			content = container.NewBorder(container.NewHBox(back), nil, nil, nil, view)
+		}
+		explorerBody.Objects = []fyne.CanvasObject{content}
+		explorerBody.Refresh()
+	}
+	showPoolDatasets = func(pool string) {
+		status := widget.NewLabelWithStyle("… reading "+pool,
+			fyne.TextAlignLeading, fyne.TextStyle{Monospace: true})
+		var rows []MountRow
+		dsList := newNavList(
+			func() int { return len(rows) },
+			func() fyne.CanvasObject {
+				return widget.NewLabelWithStyle("t", fyne.TextAlignLeading, fyne.TextStyle{Monospace: true})
+			},
+			func(i widget.ListItemID, o fyne.CanvasObject) {
+				r := rows[i]
+				mark, note := "▸ ", ""
+				if !r.Browsable() {
+					mark = "  "
+					if r.Mounted {
+						note = "— not browsable (mountpoint " + r.Mountpoint + ")"
+					} else {
+						note = "— not mounted"
+					}
+				}
+				o.(*widget.Label).SetText(fmt.Sprintf("%s%-40s %-24s %s", mark, r.Name, r.Mountpoint, note))
+			},
+		)
+		open := func() {
+			if dsList.cursor >= 0 && dsList.cursor < len(rows) && rows[dsList.cursor].Browsable() {
+				mountExplorer(host, rows[dsList.cursor].Name, "")
+				if explorerFocus != nil {
+					w.Canvas().Focus(explorerFocus)
+				}
+			}
+		}
+		dsList.OnHighlighted = func(i widget.ListItemID) { dsList.cursor = int(i) }
+		dsList.OnSelected = func(i widget.ListItemID) { dsList.cursor = int(i); open() }
+		dsList.onEnter = open
+		explorerFocus = dsList
+		explorerBody.Objects = []fyne.CanvasObject{container.NewBorder(
+			widget.NewLabelWithStyle(pool+" — pick a mounted dataset (▸) to browse",
+				fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			status, nil, nil, dsList)}
+		explorerBody.Refresh()
+		w.Canvas().Focus(dsList)
+		go func() {
+			rs, err := ListMounts(host, pool)
+			fyne.Do(func() {
+				if err != nil {
+					status.SetText("✗ " + err.Error())
+					return
+				}
+				rows = rs
+				browsable := 0
+				for i, r := range rs {
+					if r.Browsable() {
+						if browsable == 0 {
+							dsList.cursor = i // land on the first openable one
+						}
+						browsable++
+					}
+				}
+				dsList.Refresh()
+				status.SetText(fmt.Sprintf("%d datasets, %d browsable — Enter or click opens", len(rs), browsable))
+			})
+		}()
+	}
+	explorerSel.OnChanged = func(name string) {
+		if name != "" {
+			showPoolDatasets(name)
+		}
+	}
+
 	// applyLoad lands a finished scan on the UI thread; reload runs one in the
 	// background (refresh button, post-mutation refreshes). diag explains an
 	// EMPTY result (no ZFS installed / no pools imported) so the browser never
@@ -587,6 +748,22 @@ func runGUI() {
 	applyLoad := func(rows []Dataset, err error, pools string, diag HostDiagnosis) {
 		all, listErr = rows, err
 		poolsLabel.SetText(pools)
+		// Explorer picker offers POOLS (browse from the root down) — derived
+		// from the dataset list, so no extra zpool call.
+		seenPool := map[string]bool{}
+		var poolNames []string
+		for _, d := range all {
+			p := d.Name
+			if i := strings.IndexByte(p, '/'); i >= 0 {
+				p = p[:i]
+			}
+			if !seenPool[p] {
+				seenPool[p] = true
+				poolNames = append(poolNames, p)
+			}
+		}
+		explorerSel.Options = poolNames
+		explorerSel.Refresh()
 		if listErr != nil {
 			renderDossier("cannot list datasets:\n" + listErr.Error() +
 				"\n\n(zxplore needs permission to read ZFS — run it as root, or grant\n" +
@@ -671,14 +848,16 @@ func runGUI() {
 		head.Add(flare)
 	}
 	var leftHead fyne.CanvasObject = head
+	// Top-right: just the version, linking to the source repo. The
+	// "powered by kldload.com" credit lives on the front page footer now.
 	repoU, _ := url.Parse(repoURL)
-	siteU, _ := url.Parse(siteURL)
-	verLink := widget.NewHyperlink("zxplore v"+version, repoU)
+	verLink := widget.NewHyperlink("zxplore v"+versionFull(), repoU)
 	verLink.Alignment = fyne.TextAlignTrailing
-	siteLink := widget.NewHyperlink("powered by kldload.com", siteU)
-	siteLink.Alignment = fyne.TextAlignTrailing
-	wordmark := container.NewVBox(verLink, siteLink)
-	titleRow := container.NewBorder(nil, nil, leftHead, wordmark)
+	titleRow := container.NewBorder(nil, nil, leftHead, verLink)
+
+	// openManual/closeManual drive the full-window front page (built below,
+	// after mainUI exists); declared here so the toolbar can reference them.
+	var openManual, closeManual func()
 
 	poolsHeader := container.NewVBox(
 		heading("ZPOOLS — machine overview", acGold),
@@ -705,7 +884,7 @@ func runGUI() {
 		widget.NewButton("Pools…", func() { showPoolManager(w, reload) }),
 		lockBtn,
 	)
-	manualBtn := widget.NewButtonWithIcon("Manual", theme.HelpIcon(), func() { showManual(w) })
+	manualBtn := widget.NewButtonWithIcon("Manual", theme.HelpIcon(), func() { openManual() })
 	toolbar := container.NewBorder(nil, nil, toolbarLeft, manualBtn)
 	syncLock()
 	if IsKldload() {
@@ -839,16 +1018,21 @@ func runGUI() {
 	split := container.NewHSplit(card(leftPane), rightPane)
 	split.SetOffset(0.25) // narrow list, wide dossier (Transfer stays 50/50)
 
-	var tabs *container.AppTabs
+	// ── tabs: hand-built colored bar — Browser blue · Transfer purple ·
+	// Explorer green, with real air between the buttons (AppTabs can do
+	// neither). F1/F2/F3 and clicks both land in tabSel.
+	var tabSel func(int)
 	switchTab := func(n fyne.KeyName) {
-		if tabs == nil {
+		if tabSel == nil {
 			return
 		}
 		switch n {
 		case fyne.KeyF1:
-			tabs.SelectIndex(0)
+			tabSel(0)
 		case fyne.KeyF2:
-			tabs.SelectIndex(1)
+			tabSel(1)
+		case fyne.KeyF3:
+			tabSel(2)
 		}
 	}
 	list.onFunc = switchTab
@@ -857,12 +1041,73 @@ func runGUI() {
 	list.onTab = func() { w.Canvas().Focus(snapsList) }
 	snapsList.onTab = func() { w.Canvas().Focus(list) }
 	// "?" opens the in-app manual from either pane.
-	list.onHelp = func() { showManual(w) }
-	snapsList.onHelp = func() { showManual(w) }
-	tabs = container.NewAppTabs(
-		container.NewTabItem("Browser", split),
-		container.NewTabItem("Transfer", transferTab(w, switchTab)),
+	list.onHelp = func() { openManual() }
+	snapsList.onHelp = func() { openManual() }
+
+	explorerPage := container.NewBorder(
+		container.NewBorder(nil, nil,
+			heading("EXPLORER — files across every snapshot", acGreen),
+			container.NewHBox(widget.NewLabel("zpool:"), explorerSel)),
+		nil, nil, nil, explorerBody)
+	pages := []fyne.CanvasObject{split, transferTab(w, switchTab), explorerPage}
+
+	var tabBtns [3]*widget.Button
+	mkTab := func(i int, label string, a accentPair) fyne.CanvasObject {
+		b := widget.NewButton(label, func() { tabSel(i) })
+		b.Importance = widget.LowImportance
+		tabBtns[i] = b
+		return container.NewThemeOverride(b, tabTint{compactTheme{theme.DefaultTheme()}, a})
+	}
+	tabGap := func() fyne.CanvasObject {
+		r := canvas.NewRectangle(color.Transparent)
+		r.SetMinSize(fyne.NewSize(28, 1))
+		return r
+	}
+	tabBar := container.NewHBox(
+		mkTab(0, "⌂  Browser", acBlue), tabGap(),
+		mkTab(1, "⇄  Transfer", acPurple), tabGap(),
+		mkTab(2, "🗁  Explorer", acGreen),
 	)
+	tabSel = func(i int) {
+		for j, p := range pages {
+			if j == i {
+				p.Show()
+			} else {
+				p.Hide()
+			}
+		}
+		for j, b := range tabBtns {
+			if j == i {
+				b.Importance = widget.HighImportance
+			} else {
+				b.Importance = widget.LowImportance
+			}
+			b.Refresh()
+		}
+		switch i {
+		case 0:
+			w.Canvas().Focus(list)
+		case 2:
+			if explorerFocus != nil {
+				w.Canvas().Focus(explorerFocus)
+			}
+		}
+	}
+	tabs := container.NewBorder(tabBar, nil, nil, nil, container.NewStack(pages...))
+	tabSel(0)
+
+	// The right-click "Snapshot explorer" action lands here: mount the dataset
+	// in the F3 tab (picker synced for local datasets) and switch to it.
+	openExplorerTab = func(h Host, dataset, source string) {
+		mountExplorer(h, dataset, source)
+		// Sync the pool picker when the target IS a pool root; a child
+		// dataset leaves it untouched (the view names the dataset anyway).
+		if h.SSH == "" && !strings.ContainsRune(dataset, '/') {
+			explorerSel.Selected = dataset // no OnChanged retrigger — view already mounted
+			explorerSel.Refresh()
+		}
+		tabSel(2)
+	}
 
 	// ── bottom: tmux-style teal help bar ──
 	helpBG := canvas.NewRectangle(color.NRGBA{R: 0x08, G: 0x09, B: 0x0c, A: 0xff}) // very dark steel status strip
@@ -873,15 +1118,57 @@ func runGUI() {
 
 	mainUI := container.NewBorder(top, helpBar, nil, nil, tabs)
 
-	// ── splash: covers the UI while the first ZFS scan runs ──
-	splashColor := func() color.Color {
+	// ── manual page: full-window zxplore(1), opened by "?" / the Manual button ──
+	// Logo + wordmark header, the rendered manual, powered-by credit in the
+	// footer. Dismiss with Enter/Esc/Space or the Close button. The boot cover
+	// is the separate small splash below.
+	pageColor := func() color.Color {
 		if variantDark() {
 			return color.NRGBA{R: 0x08, G: 0x09, B: 0x0c, A: 0xff}
 		}
 		return color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
 	}
-	splashBG := canvas.NewRectangle(splashColor())
-	repaint = append(repaint, func() { splashBG.FillColor = splashColor(); splashBG.Refresh() })
+	pageBG := canvas.NewRectangle(pageColor())
+	repaint = append(repaint, func() { pageBG.FillColor = pageColor(); pageBG.Refresh() })
+	pageLogo := canvas.NewImageFromResource(fyne.NewStaticResource("zxplore.svg", iconSVG))
+	pageLogo.FillMode = canvas.ImageFillContain
+	pageLogo.SetMinSize(fyne.NewSize(96, 96))
+	pageTitle := heading("z x p l o r e", acGreen)
+	pageTitle.TextSize = 26
+	pageSub := heading("the universal ZFS console — zxplore(1)", acCyan)
+	pageSub.TextSize = 13
+	pageVer := heading("v"+versionFull(), acGold)
+	pageVer.TextSize = 12
+	pageHead := container.NewCenter(container.NewHBox(
+		pageLogo, container.NewVBox(pageTitle, pageSub, pageVer)))
+
+	// The manual body renders async (mandoc/man can take a beat) and slots in;
+	// centered so the 100-column page floats mid-window instead of hugging the
+	// left edge.
+	manBody := widget.NewRichText()
+	manBody.Wrapping = fyne.TextWrapOff
+	manScroll := container.NewScroll(container.NewCenter(manBody))
+	go func() {
+		text := renderManual()
+		fyne.Do(func() {
+			manBody.Segments = manualSegments(text)
+			manBody.Refresh()
+		})
+	}()
+
+	siteU, _ := url.Parse(siteURL)
+	powered := widget.NewHyperlink("powered by kldload.com", siteU)
+	closeBtn := widget.NewButtonWithIcon("Close  ⏎", theme.ConfirmIcon(), nil)
+	closeBtn.Importance = widget.HighImportance
+	footer := container.NewBorder(nil, nil, powered, closeBtn, nil)
+
+	page := container.NewStack(pageBG, container.NewBorder(
+		container.NewPadded(pageHead), container.NewPadded(footer), nil, nil, manScroll))
+	page.Hide() // opened on demand; boot is covered by the splash below
+
+	// ── splash: small and clean, covers the UI while the first ZFS scan runs ──
+	splashBG := canvas.NewRectangle(pageColor())
+	repaint = append(repaint, func() { splashBG.FillColor = pageColor(); splashBG.Refresh() })
 	splashLogo := canvas.NewImageFromResource(fyne.NewStaticResource("zxplore.svg", iconSVG))
 	splashLogo.FillMode = canvas.ImageFillContain
 	splashLogo.SetMinSize(fyne.NewSize(128, 128))
@@ -891,17 +1178,30 @@ func runGUI() {
 	splashSub := heading("the universal ZFS console", acCyan)
 	splashSub.TextSize = 13
 	splashSub.Alignment = fyne.TextAlignCenter
-	splashPhase := widget.NewLabelWithStyle("connecting to ZFS…",
+	splashVer := heading("v"+versionFull(), acGold)
+	splashVer.TextSize = 12
+	splashVer.Alignment = fyne.TextAlignCenter
+	scanPhase := widget.NewLabelWithStyle("connecting to ZFS…",
 		fyne.TextAlignCenter, fyne.TextStyle{Monospace: true})
-	splashBar := widget.NewProgressBarInfinite()
+	scanBar := widget.NewProgressBarInfinite()
 	splash := container.NewStack(splashBG, container.NewCenter(container.NewVBox(
 		container.NewCenter(splashLogo),
-		splashTitle, splashSub,
+		splashTitle, splashSub, splashVer,
 		container.NewCenter(container.NewGridWrap(
-			fyne.NewSize(300, splashBar.MinSize().Height), splashBar)),
-		splashPhase,
+			fyne.NewSize(300, scanBar.MinSize().Height), scanBar)),
+		scanPhase,
 	)))
-	w.SetContent(container.NewStack(mainUI, splash))
+	w.SetContent(container.NewStack(mainUI, page, splash))
+
+	openManual = func() {
+		page.Show()
+		w.Canvas().Unfocus() // bare keys fall through to the canvas handler below
+	}
+	closeManual = func() {
+		page.Hide()
+		w.Canvas().Focus(list)
+	}
+	closeBtn.OnTapped = func() { closeManual() }
 
 	// Ctrl+F opens find from anywhere — a modifier shortcut fires globally
 	// (unlike bare "/"/F-keys, which only reach the focused widget). Super/Win
@@ -915,9 +1215,18 @@ func runGUI() {
 		&desktop.CustomShortcut{KeyName: fyne.KeyQ, Modifier: fyne.KeyModifierAlt},
 		func(fyne.Shortcut) { w.Close() },
 	)
-	// Escape dismisses the open dialog/menu (= cancel); F-keys switch tabs when
-	// nothing else is focused (each list's navList handles them when focused).
+	// While the manual page is up, Enter/Esc/Space dismiss it (openManual
+	// unfocuses, so bare keys land here). Otherwise: Escape dismisses the open
+	// dialog/menu (= cancel); F-keys switch tabs when nothing else is focused
+	// (each list's navList handles them when focused).
 	w.Canvas().SetOnTypedKey(func(e *fyne.KeyEvent) {
+		if page.Visible() {
+			switch e.Name {
+			case fyne.KeyEscape, fyne.KeyReturn, fyne.KeyEnter, fyne.KeySpace:
+				closeManual()
+			}
+			return
+		}
 		if e.Name == fyne.KeyEscape {
 			if ov := w.Canvas().Overlays().Top(); ov != nil {
 				w.Canvas().Overlays().Remove(ov)
@@ -935,7 +1244,7 @@ func runGUI() {
 	scanGen++
 	firstGen := scanGen
 	go func() {
-		fyne.Do(func() { splashPhase.SetText("scanning ZFS…") })
+		fyne.Do(func() { scanPhase.SetText("scanning ZFS…") })
 		plat := HostPlatform(host)
 		rows, err, pools, diag := scan()
 		fyne.Do(func() {
@@ -944,7 +1253,7 @@ func runGUI() {
 				platChip.Refresh()
 			}
 			applyLoad(rows, err, pools, diag)
-			splashBar.Stop()
+			scanBar.Stop()
 			splash.Hide()
 			w.Canvas().Focus(list)
 			loadCounts(firstGen)

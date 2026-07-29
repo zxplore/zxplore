@@ -67,7 +67,7 @@ func datasetContextMenu(h Host, dataset string, w fyne.Window, refresh, onEdit f
 	}
 
 	explore := fyne.NewMenuItem("Snapshot explorer — browse / restore files…", func() {
-		showSnapshotExplorer(h, dataset, "")
+		openExplorerTab(h, dataset, "")
 	})
 	diffItem := fyne.NewMenuItem("What changed — zfs diff…", func() {
 		showDiffDialog(h, dataset, w, "")

@@ -26,11 +26,11 @@ import (
 
 const liveSourceLabel = "(live filesystem)"
 
-// showSnapshotExplorer opens the explorer window on a dataset. initialSource
-// is "" for the live filesystem, or a snapshot short name to start inside it.
-func showSnapshotExplorer(h Host, dataset, initialSource string) {
-	win := fyne.CurrentApp().NewWindow("Snapshot explorer — " + dataset)
-	win.Resize(fyne.NewSize(1280, 800))
+// snapExplorerView builds the explorer UI for one dataset — the body of the
+// F3 Explorer tab (win hosts its dialogs and focus). initialSource is "" for
+// the live filesystem, or a snapshot short name to start inside it. Returns
+// the view and the file list to focus.
+func snapExplorerView(win fyne.Window, h Host, dataset, initialSource string) (fyne.CanvasObject, fyne.Focusable) {
 
 	var (
 		mp       string // dataset mountpoint (fetched async at open)
@@ -348,26 +348,16 @@ func showSnapshotExplorer(h Host, dataset, initialSource string) {
 	split := container.NewHSplit(left, right)
 	split.SetOffset(0.55)
 
-	topBar := container.NewBorder(nil, nil,
-		dialogHeading("SNAPSHOT EXPLORER", acCyan),
+	// The tab supplies the big header; this row just holds the time-travel
+	// source picker.
+	topBar := container.NewBorder(nil, nil, nil,
 		container.NewHBox(widget.NewLabel("browsing:"), sourceSel))
 	hint := widget.NewLabelWithStyle(
-		"  hover/↑↓ = versions   Enter/Open = enter dir   pick a version → Restore   Esc close",
+		"  hover/↑↓ = versions   Enter/Open = enter dir   Tab = files ⇄ versions   pick a version → Restore",
 		fyne.TextAlignLeading, fyne.TextStyle{Monospace: true})
 	bottom := container.NewVBox(statusLbl, hint)
 
-	win.SetContent(container.NewBorder(topBar, bottom, nil, nil, split))
-	win.Canvas().SetOnTypedKey(func(e *fyne.KeyEvent) {
-		if e.Name == fyne.KeyEscape {
-			if ov := win.Canvas().Overlays().Top(); ov != nil {
-				win.Canvas().Overlays().Remove(ov)
-				return
-			}
-			win.Close()
-		}
-	})
-	win.Show()
-	win.Canvas().Focus(fileList)
+	root := container.NewBorder(topBar, bottom, nil, nil, split)
 
 	// resolve mountpoint + snapshot timeline, then land in the root dir
 	go func() {
@@ -395,6 +385,7 @@ func showSnapshotExplorer(h Host, dataset, initialSource string) {
 			loadDir()
 		})
 	}()
+	return root, fileList
 }
 
 // ── zfs diff pane ────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 .\" zxplore.1 — manual page for zxplore, the universal ZFS console.
 .\" Format: mdoc(7). Render check: mandoc -Tlint docs/zxplore.1
-.Dd July 27, 2026
+.Dd July 28, 2026
 .Dt ZXPLORE 1
 .Os
 .Sh NAME
@@ -409,8 +409,9 @@ filters the dataset list; movement is arrows or vim keys
 .Pq Ic j k g G , Ic ctrl+d Ns / Ns Ic ctrl+u .
 .Ic Tab
 moves focus into the right pane as a property editor: arrows walk the
-settable properties, Enter changes one — enum and on/off properties get the
-same option lists the GUI offers as dropdowns, free-form ones a text input.
+settable properties, Enter changes one — enum and on/off properties get
+the same option lists the GUI offers as dropdowns, free-form ones a text
+input.
 .Ic a
 opens the dataset menu (create child/zvol, rename, mount, encryption,
 destroy);
@@ -429,8 +430,8 @@ retyping the target's name.
 Browsing, diffing, and drill-downs never need unlocking.
 .Sh KEY BINDINGS (GUI)
 .Bl -tag -width "PgUp/PgDn, Home/End" -compact
-.It F1 / F2
-switch Browser / Transfer.
+.It F1 / F2 / F3
+switch Browser / Transfer / Explorer.
 .It Tab
 hop between panes (dataset list/snapshots; transfer left/right; explorer
 files/versions).
@@ -520,7 +521,7 @@ has ever changed, newest last:
 .Nm
 targets OpenZFS on Linux and FreeBSD from one codebase, shelling out to the
 portable
-.Ql zfs Ns / Ns Ql zpool
+.Ql zfs/zpool
 CLI rather than binding libzfs \(em which is what keeps it remote-capable
 and portable.
 .Sh AUTHORS

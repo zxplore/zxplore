@@ -97,20 +97,24 @@ func showPoolManager(w fyne.Window, onChange func()) {
 				rt := widget.NewRichText()
 				rt.Wrapping = fyne.TextWrapOff
 				rt.Segments = dossierSegments(txt)
+				var sd dialog.Dialog
 				browse := widget.NewButton("Browse files…", func() {
-					showSnapshotExplorer(host, p, "")
+					sd.Hide() // the explorer is the F3 tab now — clear the way to it
+					openExplorerTab(host, p, "")
 				})
 				body := container.NewBorder(nil, container.NewHBox(browse), nil, nil,
 					container.NewScroll(rt))
-				sd := dialog.NewCustom("Pool — "+p, "Close", body, w)
+				sd = dialog.NewCustom("Pool — "+p, "Close", body, w)
 				sd.Resize(fyne.NewSize(1020, 700))
 				sd.Show()
 			})
 		}()
 	})
+	var d dialog.Dialog // declared early: browseBtn closes the manager on its way to F3
 	browseBtn := widget.NewButton("Browse files…", func() {
 		if p := selPool(); p != "" {
-			showSnapshotExplorer(host, p, "")
+			d.Hide()
+			openExplorerTab(host, p, "")
 		}
 	})
 
@@ -165,7 +169,7 @@ func showPoolManager(w fyne.Window, onChange func()) {
 	body := container.NewBorder(
 		widget.NewLabelWithStyle("Pools — select one, then act", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 		buttons, nil, nil, container.NewStack(list, container.NewCenter(empty)))
-	d := dialog.NewCustom("Pools", "Close", body, w)
+	d = dialog.NewCustom("Pools", "Close", body, w)
 	d.Resize(fyne.NewSize(720, 420))
 	d.Show()
 }
