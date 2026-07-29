@@ -37,6 +37,33 @@ an audit log.
 
 ---
 
+## Suddenly, the hard stuff is a gesture
+
+Twenty years of ZFS superpowers, finally at arm's length:
+
+- **Resizing a VM's disk is as easy as a click.** Select the zvol, `✎ Edit`,
+  type `40G`, Enter — the LUN grows *while the VM runs*. No `virsh`, no
+  spelunking, no downtime.
+- **Restoring files is a snap.** Deleted the config three days ago? `F3`,
+  walk to where it was, and there it is — in every snapshot that ever held
+  it. One Enter brings it back.
+- **Yesterday's filesystem is just… there.** Browse any snapshot like a
+  folder that never went away. No mounting, no clones, no ceremony.
+- **Offsite backup is two panes and a confirm.** Encrypted datasets travel
+  raw — the backup box stores what it can never read.
+- **"What changed?" has an actual answer.** Two snapshots, one colored,
+  filterable diff. Blame assigned in seconds.
+- **Undoing a bad upgrade is one rollback.** Boot environments from *your*
+  pool's real `bootfs` — restore point before, rollback after, no sweat.
+- **Capping a runaway directory is typing a number.** `quota=50G`, Enter.
+  Guaranteeing space for the database is the same move on `reservation`.
+- **Every ZFS box you own is local now.** A saved server is a name and a
+  key; the far side needs nothing but sshd. Replicate between two *remote*
+  machines from the couch.
+
+And under every single one of these: the literal `zfs` command it ran,
+shown before it runs, written to the audit log after. Magic UX, zero magic.
+
 ## Things that used to be terminal archaeology
 
 ZFS has had these superpowers for twenty years. What it never had was a
