@@ -51,10 +51,11 @@ func newXferPane(side string, switchTab func(fyne.KeyName)) *xferPane {
 		},
 	)
 	p.list.onFunc = switchTab // F1/F2 switch tabs even when a pane is focused
-	// One selection: OnSelected records it; OnHighlighted (↑/↓ and hover)
-	// forwards into Select so the blue bar moves with the arrows too.
+	// One selection: OnSelected records it. Arrows select via keyNavSelect;
+	// mouse TRAVEL does not — source/destination are locked choices, and a
+	// stray hover must never retarget a replication. Click to select.
 	p.list.OnSelected = func(i widget.ListItemID) { p.sel = int(i) }
-	p.list.OnHighlighted = func(i widget.ListItemID) { p.list.Select(i) }
+	p.list.keyNavSelect()
 	return p
 }
 

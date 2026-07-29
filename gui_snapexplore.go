@@ -90,7 +90,7 @@ func snapExplorerView(win fyne.Window, h Host, dataset, initialSource string) (f
 				mark, v.Snapshot, humanBytes(v.Size), delta, v.MTime))
 		},
 	)
-	versList.OnHighlighted = func(i widget.ListItemID) { versList.Select(i) }
+	versList.keyNavSelect() // arrows select; mouse travel doesn't retarget the restore
 	versList.OnSelected = func(i widget.ListItemID) { versList.cursor = int(i); verSel = int(i) }
 	// Enter on a version → arrow-navigable restore menu (buttons below stay
 	// for the mouse).
@@ -220,7 +220,7 @@ func snapExplorerView(win fyne.Window, h Host, dataset, initialSource string) (f
 		}()
 	}
 
-	fileList.OnHighlighted = func(i widget.ListItemID) { fileList.Select(i) }
+	fileList.keyNavSelect() // arrows select; hover alone doesn't churn the versions pane
 	fileList.OnSelected = func(i widget.ListItemID) {
 		fileList.cursor = int(i)
 		idx := int(i) - up()

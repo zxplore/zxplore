@@ -298,12 +298,26 @@ func card(content fyne.CanvasObject) fyne.CanvasObject {
 type navList struct {
 	widget.List
 	cursor      int
+	viaKey      bool // true while a key event is in flight (keyNavSelect)
 	onFind      func()
 	onFunc      func(fyne.KeyName)     // F-key section switch
 	onEnter     func()                 // Enter/Return acts on the current row
 	onSecondary func(*fyne.PointEvent) // right-click → context menu
 	onTab       func()                 // Tab hops to the sibling pane
 	onHelp      func()                 // "?" opens the manual
+}
+
+// keyNavSelect wires OnHighlighted so ARROW/PAGE navigation moves the
+// selection but MOUSE TRAVEL does not — for panes where the selection is a
+// LOCKED CHOICE (transfer source/destination, explorer files) rather than a
+// live preview like the browser, where hover-follows is the feature. A click
+// still selects (OnSelected); hover alone changes nothing.
+func (l *navList) keyNavSelect() {
+	l.OnHighlighted = func(i widget.ListItemID) {
+		if l.viaKey {
+			l.Select(i)
+		}
+	}
 }
 
 // TypedRune catches "?" (a shifted rune, never delivered as a KeyName) for
@@ -363,6 +377,10 @@ func (l *navList) selectAt(i int) {
 }
 
 func (l *navList) TypedKey(e *fyne.KeyEvent) {
+	// Mark the window where OnHighlighted events are KEYBOARD-driven, so
+	// keyNavSelect can tell arrows (select) apart from hover (ignore).
+	l.viaKey = true
+	defer func() { l.viaKey = false }()
 	switch e.Name {
 	case fyne.KeyPageDown:
 		l.selectAt(l.cursor + navPage)
@@ -703,7 +721,11 @@ func runGUI() {
 				}
 			}
 		}
-		dsList.OnHighlighted = func(i widget.ListItemID) { dsList.cursor = int(i) }
+		dsList.OnHighlighted = func(i widget.ListItemID) {
+			if dsList.viaKey { // arrows move the target; hover doesn't
+				dsList.cursor = int(i)
+			}
+		}
 		dsList.OnSelected = func(i widget.ListItemID) { dsList.cursor = int(i); open() }
 		dsList.onEnter = open
 		explorerFocus = dsList
