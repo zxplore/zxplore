@@ -21,13 +21,25 @@ import (
 )
 
 // version is the zxplore release (shown by --version and in the GUI header).
-const version = "0.1.0"
+const version = "1.0.0"
+
+// buildNum is stamped by the Makefile (-X main.buildNum=<n>) from the
+// self-incrementing .buildnum counter; empty in a bare `go build`.
+var buildNum = ""
+
+// versionFull is version plus the build stamp: "0.1.0 b42".
+func versionFull() string {
+	if buildNum == "" || buildNum == "0" {
+		return version
+	}
+	return version + " b" + buildNum
+}
 
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "--version", "-V":
-			fmt.Println("zxplore " + version)
+			fmt.Println("zxplore " + versionFull())
 			return
 		case "--help", "-h":
 			fmt.Print("usage: zxplore [--tui] [--version]\n\n" +

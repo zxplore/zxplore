@@ -41,15 +41,35 @@ UNITDIR  = $(DESTDIR)/usr/lib/systemd/system
 GO      ?= go
 GOFLAGS ?= -trimpath
 
+# ── version stamp ─────────────────────────────────────────────────────────────
+# .buildnum is a local, gitignored counter that self-increments once per make
+# run (the phony `bump` prerequisite). It's stamped into both binaries via
+# -X main.buildNum and surfaces as "0.1.0 b<N>" in --version and the GUI header.
+BUILDNUM_FILE = .buildnum
+STAMPFLAGS    = -ldflags "-X main.buildNum=$$(cat $(BUILDNUM_FILE) 2>/dev/null || echo 0)"
+
+bump:
+	@n=$$(cat $(BUILDNUM_FILE) 2>/dev/null || echo 0); echo $$((n + 1)) > $(BUILDNUM_FILE)
+
 # ── build ────────────────────────────────────────────────────────────────────
 # zxplore (GUI+TUI, cgo) and zxplore-tui (static, terminal-only, no cgo).
 build: zxplore zxplore-tui
 
-zxplore: $(wildcard *.go) go.mod go.sum
-	CGO_ENABLED=1 $(GO) build $(GOFLAGS) -tags gui -o zxplore .
+zxplore: bump $(wildcard *.go) go.mod go.sum
+	CGO_ENABLED=1 $(GO) build $(GOFLAGS) $(STAMPFLAGS) -tags gui -o zxplore .
 
-zxplore-tui: $(wildcard *.go) go.mod go.sum
-	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -o zxplore-tui .
+zxplore-tui: bump $(wildcard *.go) go.mod go.sum
+	CGO_ENABLED=0 $(GO) build $(GOFLAGS) $(STAMPFLAGS) -o zxplore-tui .
+
+# ── test ─────────────────────────────────────────────────────────────────────
+# Unit + mock-CLI suites for both build flavors. The mock tests fake
+# zfs/zpool/pkexec/ssh on PATH — no real pool is ever touched. Feature→test
+# map: docs/TESTING.md.
+test:
+	$(GO) vet ./...
+	$(GO) vet -tags gui ./...
+	$(GO) test ./...
+	$(GO) test -tags gui ./...
 
 # ── install ──────────────────────────────────────────────────────────────────
 install: build
@@ -89,4 +109,4 @@ uninstall:
 clean:
 	rm -f zxplore zxplore-tui zxplore-bin
 
-.PHONY: build install uninstall clean
+.PHONY: build bump test install uninstall clean
