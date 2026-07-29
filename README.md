@@ -162,6 +162,30 @@ renders the man page in-app, even where `man` was never installed.
 <br/><sub>Instant splash · light theme included.</sub>
 </div>
 
+## Enhanced on kldload
+
+zxplore is 100% universal — but on a host running the
+[kldload](https://kldload.com) substrate it detects the platform and **lights
+up**: a green `● kldload — N extra tools` chip in the header, and the
+**Boot Envs…** manager lands in the toolbar. On any other ZFS box, none of
+this appears and nothing is missed — zxplore depends on nothing from kldload.
+
+The ZFS k-commands it detects and flags:
+
+| k-command | what it gives you |
+|---|---|
+| `kbe` | boot environments — create, list, activate, roll back, delete |
+| `ksnap` / `kst` | snapshot helper / snapshot status |
+| `kclone` | clone a dataset or snapshot |
+| `krecovery` | recovery flow — import and roll back a boot environment |
+| `kexport` / `kimage` / `kinspect` | export / image / inspect datasets |
+| `kdf` | ZFS-aware disk free |
+| `kdir` | directory helper |
+
+Boot environments in zxplore itself are driven by plain `zfs` against the
+pool's **real `bootfs`** — derived, never hardcoded — so they work on every
+BE-capable layout, kldload or not.
+
 ## Install
 
 **Linux**
