@@ -71,21 +71,39 @@ func (h Host) Label() string {
 	return h.SSH
 }
 
+// localCmd builds a local *exec.Cmd with a C message locale, so error
+// classification (needsElevation) sees untranslated strings whatever the
+// desktop locale is. Every local exec goes through here.
+func localCmd(program string, args ...string) *exec.Cmd {
+	cmd := exec.Command(program, args...)
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	return cmd
+}
+
 // command builds an *exec.Cmd for `program args…`, wrapping it in ssh when the
 // host is remote. Batch mode + connect timeout so an unauthorised key fails
-// fast instead of hanging.
+// fast instead of hanging; accept-new records a host key on first contact but
+// REFUSES a changed one (MITM) — never `=no`, which would trust anything.
 func (h Host) command(program string, args ...string) *exec.Cmd {
 	if h.SSH == "" {
-		return exec.Command(program, args...)
+		return localCmd(program, args...)
 	}
 	sshArgs := []string{
 		"-o", "BatchMode=yes",
-		"-o", "StrictHostKeyChecking=no",
+		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "ConnectTimeout=8",
 	}
 	sshArgs = append(sshArgs, h.sshOpts()...)
-	sshArgs = append(sshArgs, h.SSH, program)
-	sshArgs = append(sshArgs, args...)
+	// ssh joins the command words with spaces and hands them to the REMOTE
+	// shell — so every word is shell-quoted into ONE string. Unquoted, a
+	// dataset name with a space (legal in ZFS) splits apart, and `sh -c`
+	// scripts shred into words. Single quotes are POSIX-sh AND csh safe
+	// (FreeBSD root's login shell is csh).
+	words := make([]string, 0, len(args)+1)
+	for _, w := range append([]string{program}, args...) {
+		words = append(words, shellQuote(w))
+	}
+	sshArgs = append(sshArgs, h.SSH, strings.Join(words, " "))
 	return exec.Command("ssh", sshArgs...)
 }
 
@@ -591,14 +609,14 @@ func runMaybeElevated(h Host, argv ...string) error {
 		}
 		return nil
 	}
-	out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput()
+	out, err := localCmd(argv[0], argv[1:]...).CombinedOutput()
 	if err == nil {
 		return nil
 	}
 	if !needsElevation(string(out)) {
 		return fmt.Errorf("%s: %v: %s", strings.Join(argv, " "), err, strings.TrimSpace(string(out)))
 	}
-	if out2, err2 := exec.Command("pkexec", argv...).CombinedOutput(); err2 != nil {
+	if out2, err2 := localCmd("pkexec", argv...).CombinedOutput(); err2 != nil {
 		return fmt.Errorf("%s (elevated): %v: %s", strings.Join(argv, " "), err2, strings.TrimSpace(string(out2)))
 	}
 	return nil
@@ -624,7 +642,7 @@ func SetProp(h Host, dataset, prop, value string) error {
 func zfsAdminStdin(h Host, stdin string, args ...string) error {
 	auditLog(h, append([]string{"zfs"}, args...)) // argv only — stdin (passphrase) never logged
 	attempt := func(argv ...string) (string, error) {
-		cmd := exec.Command(argv[0], argv[1:]...)
+		cmd := localCmd(argv[0], argv[1:]...)
 		if h.SSH != "" {
 			cmd = h.command(argv[0], argv[1:]...)
 		}
@@ -724,14 +742,17 @@ type BootEnv struct {
 // bootDataset returns the active boot filesystem from the pool's bootfs (e.g.
 // rpool/ROOT/onyx). We DERIVE it rather than hardcode rpool/ROOT/default — the
 // BE dataset name varies per install (that hardcode is the kbe/krecovery bug).
-// Empty when no bootfs is set (not a boot-environment system).
+// Queried across ALL pools (no pool-name hardcode either: FreeBSD installs use
+// zroot, not rpool). Empty when no bootfs is set anywhere (not a BE system).
 func bootDataset(h Host) string {
-	out, err := run(h.command("zpool", "get", "-H", "-o", "value", "bootfs", "rpool"))
+	out, err := run(h.command("zpool", "get", "-H", "-o", "value", "bootfs"))
 	if err != nil {
 		return ""
 	}
-	if v := strings.TrimSpace(out); v != "" && v != "-" {
-		return v
+	for _, v := range strings.Split(out, "\n") {
+		if v = strings.TrimSpace(v); v != "" && v != "-" {
+			return v
+		}
 	}
 	return ""
 }
@@ -782,7 +803,7 @@ func RollbackBootEnv(h Host, snap string) error { return zfsAdmin(h, "rollback",
 // remote leg carries its own ssh (root can still read the user's key file).
 func RunReplicate(pipeline string) error {
 	auditLog(LocalHost(), []string{"sh", "-c", pipeline})
-	out, err := exec.Command("pkexec", "sh", "-c", pipeline).CombinedOutput()
+	out, err := localCmd("pkexec", "sh", "-c", pipeline).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("replicate: %v: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -1069,7 +1090,7 @@ func shellQuote(s string) string {
 }
 
 func sshPrefix(h Host) string {
-	s := "ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=8"
+	s := "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8"
 	for _, o := range h.sshOpts() {
 		s += " " + shellQuote(o)
 	}
@@ -1350,7 +1371,7 @@ func WelcomeText(diag HostDiagnosis) string {
 // device scan.
 func zpoolAdminOut(h Host, args ...string) (string, error) {
 	if h.SSH == "" {
-		return run(exec.Command("pkexec", append([]string{"zpool"}, args...)...))
+		return run(localCmd("pkexec", append([]string{"zpool"}, args...)...))
 	}
 	return run(h.command("zpool", args...))
 }
@@ -1427,6 +1448,36 @@ func snapShort(snap string) string {
 		return snap[i+1:]
 	}
 	return snap
+}
+
+// MountRow is one dataset's mount state — the Explorer's pool→dataset chooser
+// row. Browsable == mounted at a real path (a pool root is often none/off).
+type MountRow struct {
+	Name, Mountpoint string
+	Mounted          bool
+}
+
+// Browsable reports whether files can be listed under this dataset.
+func (m MountRow) Browsable() bool {
+	return m.Mounted && strings.HasPrefix(m.Mountpoint, "/")
+}
+
+// ListMounts lists every dataset in a subtree with mountpoint and mounted
+// state, in one call.
+func ListMounts(h Host, path string) ([]MountRow, error) {
+	out, err := run(h.command("zfs", "list", "-H", "-o", "name,mountpoint,mounted", "-r", path))
+	if err != nil {
+		return nil, err
+	}
+	var rows []MountRow
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		f := strings.Split(line, "\t")
+		if len(f) < 3 {
+			continue
+		}
+		rows = append(rows, MountRow{Name: f[0], Mountpoint: f[1], Mounted: f[2] == "yes"})
+	}
+	return rows, nil
 }
 
 // Mountpoint returns the dataset's mountpoint, erroring clearly when it isn't
@@ -1580,7 +1631,7 @@ func SnapshotDiff(h Host, from, to string) ([]DiffEntry, error) {
 		if h.SSH != "" {
 			return nil, err
 		}
-		out, err = run(exec.Command("pkexec", append([]string{"zfs"}, args...)...))
+		out, err = run(localCmd("pkexec", append([]string{"zfs"}, args...)...))
 		if err != nil {
 			return nil, err
 		}

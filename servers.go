@@ -11,6 +11,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // Server is one saved connection.
@@ -186,8 +188,6 @@ func PublicKey(keyPath string) (string, error) {
 // using a ONE-TIME password. Pure Go (golang.org/x/crypto/ssh) — no sshpass,
 // no password on any process's argv or environment, used only for this dial
 // and never stored. After this, key auth works and no password is needed.
-// (Host-key checking is intentionally lax for this FIRST contact — the same
-// trust-on-first-use moment as ssh-copy-id to a new machine.)
 func AuthorizeKey(s Server, password string) error {
 	pub, err := PublicKey(s.KeyPath)
 	if err != nil {
@@ -202,9 +202,12 @@ func AuthorizeKey(s Server, password string) error {
 		user = os.Getenv("USER")
 	}
 	cfg := &ssh.ClientConfig{
-		User:            user,
-		Auth:            []ssh.AuthMethod{ssh.Password(password)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TOFU: first contact installs the key
+		User: user,
+		Auth: []ssh.AuthMethod{ssh.Password(password)},
+		// accept-new, like the ssh CLI: first contact records the host key in
+		// known_hosts; a CHANGED key refuses — this leg carries a PASSWORD, so
+		// blind trust here would hand it to a man-in-the-middle.
+		HostKeyCallback: hostKeyAcceptNew(),
 		Timeout:         10 * time.Second,
 	}
 	client, err := ssh.Dial("tcp", net.JoinHostPort(s.Host, strconv.Itoa(port)), cfg)
@@ -225,6 +228,40 @@ func AuthorizeKey(s Server, password string) error {
 		return fmt.Errorf("authorize key on %s: %v: %s", s.sshTarget(), err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// hostKeyAcceptNew mirrors OpenSSH's StrictHostKeyChecking=accept-new for the
+// in-process ssh client: a host already in ~/.ssh/known_hosts must present the
+// SAME key (a changed key is refused — likely MITM); an unknown host is
+// recorded on first contact. Keeping the pin in the standard known_hosts file
+// means the later `ssh` CLI legs (engine, replication) verify against the very
+// key this bootstrap saw.
+func hostKeyAcceptNew() ssh.HostKeyCallback {
+	home, _ := os.UserHomeDir()
+	path := filepath.Join(home, ".ssh", "known_hosts")
+	return func(hostport string, remote net.Addr, key ssh.PublicKey) error {
+		if check, err := knownhosts.New(path); err == nil {
+			err := check(hostport, remote, key)
+			if err == nil {
+				return nil // known and matching
+			}
+			var ke *knownhosts.KeyError
+			if errors.As(err, &ke) && len(ke.Want) > 0 {
+				return fmt.Errorf("host key for %s CHANGED — possible man-in-the-middle; verify the server and update %s", hostport, path)
+			}
+			// otherwise: unknown host — record it below
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return fmt.Errorf("record host key: %v", err)
+		}
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			return fmt.Errorf("record host key: %v", err)
+		}
+		defer f.Close()
+		_, err = fmt.Fprintln(f, knownhosts.Line([]string{hostport}, key))
+		return err
+	}
 }
 
 // TestServer verifies the key works AND ZFS is reachable: it runs `zfs list` on
