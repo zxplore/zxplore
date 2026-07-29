@@ -238,6 +238,20 @@ func serverEditDialog(w fyne.Window, srv Server, isNew bool, onSaved func()) {
 		}
 		return true
 	}
+	// userOK gates the auth flows: an empty User silently means "connect as
+	// your LOCAL username", which on a remote box is almost never an account —
+	// every test and authorize then fails with a baffling permission-denied.
+	userOK := func() bool {
+		if !nameOK() {
+			return false
+		}
+		if srv.User == "" {
+			dialog.ShowInformation("SSH user required",
+				"Set the User field to the account on the server (e.g. admin or zexp).\n\nLeft empty, ssh would connect as your local username — which usually\ndoesn't exist on the remote box and fails with 'permission denied'.", w)
+			return false
+		}
+		return true
+	}
 
 	genBtn := widget.NewButton("Generate key", func() {
 		if !nameOK() {
@@ -301,7 +315,7 @@ func serverEditDialog(w fyne.Window, srv Server, isNew bool, onSaved func()) {
 	})
 
 	authBtn := widget.NewButton("Authorize (password)…", func() {
-		if !nameOK() {
+		if !userOK() {
 			return
 		}
 		if srv.KeyPath == "" {
@@ -345,7 +359,7 @@ func serverEditDialog(w fyne.Window, srv Server, isNew bool, onSaved func()) {
 		w.Canvas().Focus(pw)
 	})
 	testBtn := widget.NewButton("Test", func() {
-		if !nameOK() {
+		if !userOK() {
 			return
 		}
 		go func() {
@@ -364,7 +378,7 @@ func serverEditDialog(w fyne.Window, srv Server, isNew bool, onSaved func()) {
 	// one password prompt, one click. The buttons above remain for piecemeal
 	// setups (own key, manual authorize on password-less servers).
 	setupBtn := widget.NewButtonWithIcon("⚡ Set up & save", theme.MediaPlayIcon(), func() {
-		if !nameOK() {
+		if !userOK() {
 			return
 		}
 		pw := widget.NewPasswordEntry()
