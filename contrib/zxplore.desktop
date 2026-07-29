@@ -8,4 +8,4 @@ Icon=zxplore-tui
 Terminal=false
 Categories=System;Utility;FileTools;
 Keywords=zfs;zpool;snapshot;replicate;storage;
-StartupWMClass=zxplore
+StartupWMClass=ca.zxplore
