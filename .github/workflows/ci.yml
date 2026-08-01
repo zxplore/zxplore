@@ -1,6 +1,8 @@
-# ci.yml — vet + test both build flavors, build both binaries, and prove the
-# static TUI cross-compiles for the other OpenZFS platforms. The test suite
-# needs no real pool (mock CLI — see docs/TESTING.md).
+# ci.yml — vet + test both build flavors (plus -race), static analysis
+# (staticcheck, govulncheck), man page lint, and cross-compile proof for every
+# platform a release ships. On tag pushes, version-guard enforces that the tag
+# equals "v" + the version constant in main.go — the binary must never lie
+# about itself. The test suite needs no real pool (mock CLI — docs/TESTING.md).
 name: ci
 
 on:
@@ -21,22 +23,63 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc pkg-config libgl1-mesa-dev xorg-dev \
-            libwayland-dev libxkbcommon-dev libfontconfig1-dev
+            libwayland-dev libxkbcommon-dev libfontconfig1-dev mandoc
       - name: gofmt clean
         run: test -z "$(gofmt -l .)"
       - name: Vet + test (both flavors)
         run: make test
+      - name: Race detector (both flavors)
+        run: |
+          go test -race ./...
+          go test -race -tags gui ./...
+      - name: staticcheck (both flavors)
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          staticcheck ./...
+          staticcheck -tags gui ./...
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+      - name: Man page lint
+        run: mandoc -T lint docs/zxplore.1
       - name: Build both binaries
         run: make build
 
+  # A release tag that disagrees with --version ships a lying binary. Refuse.
+  version-guard:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches main.go version constant
+        run: |
+          ver="v$(sed -n 's/^const version = "\(.*\)"$/\1/p' main.go)"
+          test "${GITHUB_REF_NAME}" = "$ver" || {
+            echo "tag ${GITHUB_REF_NAME} != main.go ${ver}"; exit 1; }
+
+  # Compile-proof for every platform the release workflow ships. This proves
+  # it links, not that it works — run the mock-CLI suite on a real BSD/illumos
+  # box before claiming a platform in the README.
   cross:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux,   goarch: arm64 }
+          - { goos: freebsd, goarch: amd64 }
+          - { goos: freebsd, goarch: arm64 }
+          - { goos: openbsd, goarch: amd64 }
+          - { goos: netbsd,  goarch: amd64 }
+          - { goos: illumos, goarch: amd64 }
+          - { goos: solaris, goarch: amd64 }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: 'stable'
-      - name: Static TUI cross-compiles for FreeBSD and illumos
-        run: |
-          CGO_ENABLED=0 GOOS=freebsd GOARCH=amd64 go build -o /dev/null .
-          CGO_ENABLED=0 GOOS=illumos GOARCH=amd64 go build -o /dev/null .
+      - name: Static TUI cross-compiles (${{ matrix.goos }}/${{ matrix.goarch }})
+        run: >
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }}
+          go build -o /dev/null .

@@ -21,13 +21,14 @@ import (
 )
 
 // version is the zxplore release (shown by --version and in the GUI header).
-const version = "1.0.0"
+// Must match the release tag — ci enforces tag == "v" + version on tag builds.
+const version = "1.1.0"
 
 // buildNum is stamped by the Makefile (-X main.buildNum=<n>) from the
 // self-incrementing .buildnum counter; empty in a bare `go build`.
 var buildNum = ""
 
-// versionFull is version plus the build stamp: "0.1.0 b42".
+// versionFull is version plus the build stamp: "1.1.0 b42".
 func versionFull() string {
 	if buildNum == "" || buildNum == "0" {
 		return version

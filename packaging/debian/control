@@ -1,19 +1,28 @@
 Source: zxplore
 Section: admin
 Priority: optional
-Maintainer: zxplore <hello@zxplore.ca>
-Build-Depends: debhelper-compat (= 13)
+Maintainer: Anthony <admin@zxplore.dev>
+Build-Depends: debhelper-compat (= 13),
+ golang-go (>= 2:1.26~) | golang-1.26,
+ gcc,
+ pkg-config,
+ libgl1-mesa-dev,
+ xorg-dev,
+ libwayland-dev,
+ libxkbcommon-dev,
+ libfontconfig1-dev
 Standards-Version: 4.6.2
-Homepage: https://zxplore.ca
+Homepage: https://github.com/zxplore/zxplore
 
 Package: zxplore
-Architecture: all
-Depends: ${misc:Depends}, bash, zfsutils-linux | zfs
-Recommends: fzf, pv, mbuffer, python3
-Suggests: libvirt-clients
-Description: A direct interface to your ZFS primitives — not a dashboard
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, zfsutils-linux | zfs
+Recommends: polkitd | policykit-1
+Suggests: openssh-client
+Description: Keyboard-driven console for OpenZFS — primitives, not a dashboard
  zxplore is a fast, keyboard-driven console for OpenZFS: browse datasets and
- snapshots with a full properties + permissions view, snapshot on tap, point-
- and-shoot replicate over SSH, explore files inside datasets/snapshots/zvols,
- and a scoped snapshot/rollback transaction API. Every action is a plain
- zfs/zpool command — a primitives tool, not a dashboard.
+ snapshots with full property dossiers, replicate over SSH (encrypted
+ datasets travel raw), restore files from any snapshot, and manage boot
+ environments. Two binaries ship: zxplore (native Fyne GUI with a --tui
+ terminal mode) and zxplore-tui (fully static, terminal only). Every action
+ is a plain zfs/zpool command — a primitives tool, not a dashboard.

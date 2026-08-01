@@ -188,6 +188,13 @@ BE-capable layout, kldload or not.
 
 ## Install
 
+**Prebuilt binaries** — every [release](https://github.com/zxplore/zxplore/releases)
+ships a fully static `zxplore-tui` for Linux (amd64/arm64), FreeBSD
+(amd64/arm64), OpenBSD, NetBSD, illumos and Solaris, plus `.rpm`/`.deb`/Arch
+packages of it, all listed in `SHA256SUMS`. Drop the binary anywhere — it has
+zero runtime dependencies beyond the `zfs`/`zpool` CLI. The GUI binary is cgo
+(Fyne/OpenGL) and is built from source or via the `packaging/` skeletons:
+
 **Linux**
 
 ```

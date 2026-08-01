@@ -1,21 +1,31 @@
-# Maintainer: zxplore <hello@zxplore.ca>
+# Maintainer: Anthony <admin@zxplore.dev>
 pkgname=zxplore
-pkgver=0.1.0
+pkgver=1.1.0
 pkgrel=1
-pkgdesc="A direct interface to your ZFS primitives — not a dashboard"
-arch=('any')
-url="https://zxplore.ca"
-license=('BSD')
-depends=('bash' 'zfs-utils')
-optdepends=('fzf: interactive console'
-            'pv: replication progress'
-            'mbuffer: replication throughput'
-            'python: transaction API'
-            'libvirt: VM-zvol explore')
-source=("$pkgname-$pkgver.tar.gz")
-sha256sums=('SKIP')
+pkgdesc="Keyboard-driven console for OpenZFS — primitives, not a dashboard"
+arch=('x86_64' 'aarch64')
+url="https://github.com/zxplore/zxplore"
+license=('BSD-3-Clause')
+depends=('zfs-utils' 'libgl' 'libxkbcommon' 'wayland' 'fontconfig' 'libx11'
+         'libxcursor' 'libxrandr' 'libxinerama' 'libxi')
+makedepends=('go' 'gcc' 'pkgconf' 'make')
+optdepends=('polkit: GUI privilege elevation (pkexec)'
+            'openssh: remote machines and replication')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
+sha256sums=('SKIP') # pin to the release tarball checksum when submitting to AUR
+
+build() {
+  cd "$pkgname-$pkgver"
+  make build
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  make test
+}
+
 package() {
-  cd "$srcdir/$pkgname-$pkgver"
+  cd "$pkgname-$pkgver"
   make DESTDIR="$pkgdir" PREFIX=/usr install
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

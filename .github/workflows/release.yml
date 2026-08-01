@@ -1,0 +1,69 @@
+# release.yml — tag push → GitHub Release carrying static zxplore-tui binaries
+# for every OpenZFS platform Go can target, a SHA256SUMS manifest, and
+# rpm/deb/Arch packages of the static binary (nfpm — see nfpm.yaml).
+#
+# The GUI binary (Fyne, cgo) is deliberately NOT prebuilt: a cgo binary built
+# on one glibc is a portability lie. GUI users build from source (make) or use
+# the native packaging under packaging/, which builds on the target distro.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+      - name: Nothing ships unless the suite passes
+        run: |
+          go vet ./...
+          go test ./...
+      - name: Tag matches main.go version constant
+        run: |
+          ver="v$(sed -n 's/^const version = "\(.*\)"$/\1/p' main.go)"
+          test "${GITHUB_REF_NAME}" = "$ver" || {
+            echo "tag ${GITHUB_REF_NAME} != main.go ${ver}"; exit 1; }
+      - name: Build static zxplore-tui for all platforms
+        run: |
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 freebsd/amd64 freebsd/arm64 \
+                        openbsd/amd64 netbsd/amd64 illumos/amd64 solaris/amd64; do
+            goos=${target%/*} goarch=${target#*/}
+            out="dist/zxplore-tui_${GITHUB_REF_NAME}_${goos}_${goarch}"
+            echo "building $out"
+            CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch \
+              go build -trimpath -o "$out" .
+          done
+      - name: Linux packages (rpm / deb / Arch) via nfpm
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          export VERSION="${GITHUB_REF_NAME#v}"
+          for arch in amd64 arm64; do
+            export ARCH="$arch"
+            export BINARY="dist/zxplore-tui_${GITHUB_REF_NAME}_linux_${arch}"
+            for pkg in rpm deb archlinux; do
+              nfpm package -f nfpm.yaml -p "$pkg" -t dist/
+            done
+          done
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS
+      - name: Release notes from CHANGELOG
+        run: |
+          # First "## [" section of CHANGELOG.md = this release's notes.
+          awk '/^## \[/{n++} n==1' CHANGELOG.md > /tmp/notes.md
+          test -s /tmp/notes.md || echo "See CHANGELOG.md" > /tmp/notes.md
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "zxplore ${GITHUB_REF_NAME}" \
+            --notes-file /tmp/notes.md

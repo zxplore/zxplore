@@ -1,5 +1,17 @@
+zxplore (1.1.0-1) unstable; urgency=medium
+
+  * Go console: native Fyne GUI + fully static TUI from one codebase.
+  * Transfer: delegation grants — replicate as an unprivileged user.
+  * Servers: one-click setup, host-key reinstall recovery, reliable
+    password prompts, explicit ssh user required before auth.
+  * Fix: a loaded ssh-agent no longer breaks every connection.
+  * Packaging now builds the Go tree (Architecture: any; was a bash
+    prototype packaged as "all").
+
+ -- Anthony <admin@zxplore.dev>  Fri, 31 Jul 2026 12:00:00 -0700
+
 zxplore (0.1.0-1) unstable; urgency=medium
 
-  * Initial release.
+  * Initial release (bash prototype, retired).
 
- -- zxplore <hello@zxplore.ca>  Sun, 26 Jul 2026 00:00:00 +0000
+ -- Anthony <admin@zxplore.dev>  Sun, 26 Jul 2026 00:00:00 +0000

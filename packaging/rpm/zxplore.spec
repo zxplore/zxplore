@@ -1,26 +1,42 @@
 Name:           zxplore
-Version:        0.1.0
+Version:        1.1.0
 Release:        1%{?dist}
-Summary:        A direct interface to your ZFS primitives — not a dashboard
+Summary:        Keyboard-driven console for OpenZFS — primitives, not a dashboard
 License:        BSD-3-Clause
-URL:            https://zxplore.ca
-BuildArch:      noarch
-Requires:       bash
+URL:            https://github.com/zxplore/zxplore
+Source0:        %{url}/archive/v%{version}/zxplore-%{version}.tar.gz
+
+# Go build (cgo for the Fyne GUI binary; the TUI binary is pure Go).
+BuildRequires:  golang >= 1.26
+BuildRequires:  gcc
+BuildRequires:  make
+BuildRequires:  pkgconfig(gl)
+BuildRequires:  pkgconfig(x11)
+BuildRequires:  pkgconfig(xcursor)
+BuildRequires:  pkgconfig(xrandr)
+BuildRequires:  pkgconfig(xinerama)
+BuildRequires:  pkgconfig(xi)
+BuildRequires:  pkgconfig(xxf86vm)
+BuildRequires:  pkgconfig(wayland-client)
+BuildRequires:  pkgconfig(xkbcommon)
+BuildRequires:  pkgconfig(fontconfig)
+
 Requires:       zfs
-Recommends:     fzf
-Recommends:     pv
-Recommends:     mbuffer
-Recommends:     python3
+Recommends:     polkit
 
 %description
 zxplore is a fast, keyboard-driven console for OpenZFS: browse datasets and
-snapshots with a full properties + permissions view, snapshot on tap, point-and-
-shoot replicate over SSH, explore files inside datasets/snapshots/zvols, and a
-scoped snapshot/rollback transaction API. Every action is a plain zfs/zpool
-command — a primitives tool, not a dashboard.
+snapshots with full property dossiers, replicate over SSH (encrypted datasets
+travel raw), restore files from any snapshot, and manage boot environments.
+Two binaries: zxplore (native Fyne GUI, --tui for terminal) and zxplore-tui
+(fully static, terminal only). Every action is a plain zfs/zpool command —
+a primitives tool, not a dashboard.
 
 %prep
-%setup -q -n zxplore-%{version}
+%autosetup -n zxplore-%{version}
+
+%build
+make build
 
 %install
 make DESTDIR=%{buildroot} PREFIX=/usr install
@@ -29,11 +45,21 @@ make DESTDIR=%{buildroot} PREFIX=/usr install
 %license LICENSE
 %doc README.md
 /usr/bin/zxplore
+/usr/bin/zxplore-tui
 /usr/bin/zxplore-api
 /usr/bin/zxplore-txn
+%{_mandir}/man1/zxplore.1*
+%{_datadir}/applications/zxplore.desktop
+%{_datadir}/applications/zxplore-tui.desktop
+%{_datadir}/icons/hicolor/scalable/apps/zxplore.svg
+%{_datadir}/icons/hicolor/scalable/apps/zxplore-tui.svg
+%{_docdir}/zxplore/README.md
 %{_docdir}/zxplore/DESIGN.md
-/usr/lib/systemd/system/zxplore-api.service
 
 %changelog
-* Sun Jul 26 2026 zxplore <hello@zxplore.ca> - 0.1.0-1
-- Initial package.
+* Fri Jul 31 2026 Anthony <admin@zxplore.dev> - 1.1.0-1
+- Go console (Fyne GUI + static TUI); delegation grants; server setup flows;
+  ssh-agent and host-key recovery fixes. Replaces the bash prototype.
+
+* Sun Jul 26 2026 Anthony <admin@zxplore.dev> - 0.1.0-1
+- Initial packaging (bash prototype, retired).

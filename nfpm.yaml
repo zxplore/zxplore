@@ -1,0 +1,38 @@
+# nfpm.yaml — one config → rpm/deb/Arch packages of the STATIC terminal
+# binary (zxplore-tui). Consumed by .github/workflows/release.yml, which
+# injects VERSION/ARCH/BINARY. The GUI binary is cgo and stays distro-built
+# (see packaging/). If this file is missing, releases ship bare binaries only.
+name: zxplore-tui
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: admin
+priority: optional
+maintainer: Anthony <admin@zxplore.dev>
+description: |
+  Keyboard-driven terminal console for OpenZFS — a primitives tool, not a
+  dashboard. Browse datasets and snapshots with full property dossiers,
+  replicate over SSH (encrypted datasets travel raw), restore files from any
+  snapshot, and manage boot environments. Fully static binary; needs only
+  the zfs/zpool CLI at runtime. Every action is a plain zfs/zpool command.
+homepage: https://github.com/zxplore/zxplore
+license: BSD-3-Clause
+contents:
+  - src: ${BINARY}
+    dst: /usr/bin/zxplore-tui
+  - src: docs/zxplore.1
+    dst: /usr/share/man/man1/zxplore.1
+  - src: LICENSE
+    dst: /usr/share/doc/zxplore-tui/LICENSE
+# Runtime ZFS package names differ per ecosystem; recommends (not depends) so
+# the package also installs cleanly on zfs-from-source / root-on-ZFS systems.
+overrides:
+  rpm:
+    recommends:
+      - zfs
+  deb:
+    recommends:
+      - zfsutils-linux
+  archlinux:
+    recommends:
+      - zfs-utils

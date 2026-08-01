@@ -1,6 +1,6 @@
 .\" zxplore.1 — manual page for zxplore, the universal ZFS console.
 .\" Format: mdoc(7). Render check: mandoc -Tlint docs/zxplore.1
-.Dd July 28, 2026
+.Dd July 31, 2026
 .Dt ZXPLORE 1
 .Os
 .Sh NAME
@@ -526,7 +526,9 @@ has ever changed, newest last:
 .Xr zpool 8
 .Sh HISTORY
 .Nm
-targets OpenZFS on Linux and FreeBSD from one codebase, shelling out to the
+targets OpenZFS on Linux and
+.Fx
+from one codebase, shelling out to the
 portable
 .Ql zfs/zpool
 CLI rather than binding libzfs \(em which is what keeps it remote-capable
