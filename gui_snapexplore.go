@@ -182,8 +182,7 @@ func snapExplorerView(win fyne.Window, h Host, dataset, initialSource string) (f
 		},
 	)
 
-	var loadDir func()
-	loadDir = func() {
+	loadDir := func() {
 		refreshPath()
 		dirGen++
 		gen := dirGen

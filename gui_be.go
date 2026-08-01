@@ -24,8 +24,7 @@ func showBootEnvManager(w fyne.Window) {
 	sel := -1
 
 	title := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	var list *widget.List
-	list = widget.NewList(
+	list := widget.NewList(
 		func() int { return len(bes) },
 		func() fyne.CanvasObject { return widget.NewLabel("t") },
 		func(i widget.ListItemID, o fyne.CanvasObject) {

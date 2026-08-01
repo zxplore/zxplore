@@ -149,8 +149,6 @@ var (
 	acBlue   = accentPair{color.NRGBA{0x4d, 0xa6, 0xff, 0xff}, color.NRGBA{0x14, 0x66, 0xd8, 0xff}}
 	acPurple = accentPair{color.NRGBA{0xc7, 0x7d, 0xff, 0xff}, color.NRGBA{0x7a, 0x2f, 0xe0, 0xff}}
 	acCyan   = accentPair{color.NRGBA{0x33, 0xe6, 0xe6, 0xff}, color.NRGBA{0x0a, 0x8f, 0x9c, 0xff}}
-	acYellow = accentPair{color.NRGBA{0xff, 0xe1, 0x4d, 0xff}, color.NRGBA{0xb5, 0x83, 0x00, 0xff}} // warning
-	acRed    = accentPair{color.NRGBA{0xff, 0x5c, 0x5c, 0xff}, color.NRGBA{0xd1, 0x1f, 0x1f, 0xff}} // error/danger
 	acTopic  = accentPair{color.NRGBA{0x62, 0xa6, 0xe6, 0xff}, color.NRGBA{0x2a, 0x63, 0xc8, 0xff}} // dossier ━━ headers (slightly duller blue)
 )
 
@@ -798,14 +796,14 @@ func runGUI() {
 		}
 	}
 	// scan gathers everything applyLoad needs, off the UI thread.
-	scan := func() ([]Dataset, error, string, HostDiagnosis) {
+	scan := func() ([]Dataset, string, HostDiagnosis, error) {
 		rows, err := ListDatasets(host)
 		pools := PoolsOverview(host)
 		diag := HostOK
 		if err == nil && len(rows) == 0 {
 			diag = DiagnoseHost(host)
 		}
-		return rows, err, pools, diag
+		return rows, pools, diag, err
 	}
 	// Snapshot counts are the expensive part (seconds of kernel time with
 	// thousands of snapshots) — they stream in AFTER the list paints, and a
@@ -843,7 +841,7 @@ func runGUI() {
 		scanGen++
 		gen := scanGen
 		go func() {
-			rows, err, pools, diag := scan()
+			rows, pools, diag, err := scan()
 			fyne.Do(func() {
 				if gen != scanGen {
 					return
@@ -1268,7 +1266,7 @@ func runGUI() {
 	go func() {
 		fyne.Do(func() { scanPhase.SetText("scanning ZFS…") })
 		plat := HostPlatform(host)
-		rows, err, pools, diag := scan()
+		rows, pools, diag, err := scan()
 		fyne.Do(func() {
 			if plat != "" {
 				platChip.Text = "● " + plat

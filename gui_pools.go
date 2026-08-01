@@ -21,8 +21,7 @@ func showPoolManager(w fyne.Window, onChange func()) {
 	pools, _ := ListPools(host)
 	sel := -1
 
-	var list *widget.List
-	list = widget.NewList(
+	list := widget.NewList(
 		func() int { return len(pools) },
 		func() fyne.CanvasObject { return widget.NewLabel("t") },
 		func(i widget.ListItemID, o fyne.CanvasObject) { o.(*widget.Label).SetText(pools[i]) },

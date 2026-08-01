@@ -71,8 +71,7 @@ func showServerManager(w fyne.Window, onConnect func(Server)) {
 	}
 
 	// ── left: two-line rows (bold name / mono target) ──
-	var list *widget.List
-	list = widget.NewList(
+	list := widget.NewList(
 		func() int { return len(servers) },
 		func() fyne.CanvasObject {
 			return container.NewVBox(
