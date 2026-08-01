@@ -42,7 +42,13 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
       - name: Man page lint
-        run: mandoc -T lint docs/zxplore.1
+        # Fail on WARNING/ERROR, tolerate STYLE. -T lint implies -W all and
+        # ignores a -W override (mandoc 1.14.6), so filter explicitly. STYLE
+        # is mostly "referenced manual not found" — a property of what man
+        # pages the runner has installed, not of our page.
+        run: |
+          out=$(mandoc -T lint docs/zxplore.1 2>&1 | grep -v ' STYLE: ' || true)
+          if [ -n "$out" ]; then echo "$out"; exit 1; fi
       - name: Build both binaries
         run: make build
 

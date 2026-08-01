@@ -46,13 +46,18 @@ jobs:
         run: |
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
           export VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist/.stage
           for arch in amd64 arm64; do
             export ARCH="$arch"
-            export BINARY="dist/zxplore-tui_${GITHUB_REF_NAME}_linux_${arch}"
+            # nfpm expands ${VERSION}/${ARCH} but not env vars inside
+            # contents.src — stage the per-arch binary at the fixed path
+            # nfpm.yaml points at.
+            cp "dist/zxplore-tui_${GITHUB_REF_NAME}_linux_${arch}" dist/.stage/zxplore-tui
             for pkg in rpm deb archlinux; do
               nfpm package -f nfpm.yaml -p "$pkg" -t dist/
             done
           done
+          rm -rf dist/.stage
       - name: Checksums
         run: cd dist && sha256sum * > SHA256SUMS
       - name: Release notes from CHANGELOG

@@ -18,7 +18,10 @@ description: |
 homepage: https://github.com/zxplore/zxplore
 license: BSD-3-Clause
 contents:
-  - src: ${BINARY}
+  # Fixed staging path: nfpm expands ${VERSION}/${ARCH} from the environment
+  # but does NOT expand env vars in contents globs — the release workflow
+  # copies the per-arch binary here before each nfpm invocation.
+  - src: dist/.stage/zxplore-tui
     dst: /usr/bin/zxplore-tui
   - src: docs/zxplore.1
     dst: /usr/share/man/man1/zxplore.1
