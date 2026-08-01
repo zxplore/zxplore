@@ -24,6 +24,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc pkg-config libgl1-mesa-dev xorg-dev \
             libwayland-dev libxkbcommon-dev libfontconfig1-dev mandoc
+          # The runner image ships a stale mandoc.db; without this, mandoc
+          # emits WARNING "outdated mandoc.db lacks ssh(1) entry" on every
+          # cross-reference and the lint gate fails on runner state rather
+          # than on our page.
+          sudo makewhatis /usr/share/man
       - name: gofmt clean
         run: test -z "$(gofmt -l .)"
       - name: Vet + test (both flavors)

@@ -69,6 +69,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" dist/* \
-            --title "zxplore ${GITHUB_REF_NAME}" \
-            --notes-file /tmp/notes.md
+          # Idempotent: a re-fired tag build updates the existing release's
+          # assets instead of failing on "release already exists".
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" dist/* \
+              --title "zxplore ${GITHUB_REF_NAME}" \
+              --notes-file /tmp/notes.md
+          fi
