@@ -562,7 +562,15 @@ func runGUI() {
 	a.SetIcon(fyne.NewStaticResource("zxplore.svg", iconSVG))
 
 	host := LocalHost()
-	w := a.NewWindow("zxplore — ZFS console")
+	// Title is EXACTLY "zxplore" on purpose: GLFW derives the X11 WM_CLASS
+	// from the title at (deferred) window creation, and the shell maps
+	// WM_CLASS "zxplore" → zxplore.desktop for the dock icon/grouping. The
+	// old pretty title ("zxplore — ZFS console") became the WM_CLASS itself,
+	// matched no launcher, and every desktop showed the generic fallback
+	// icon. Retitling after creation doesn't work either — Fyne creates the
+	// real window at Show(), long after any SetTitle here. The launcher's
+	// GenericName carries "ZFS Console" for menus instead.
+	w := a.NewWindow("zxplore")
 	// Normal window (title bar + min/max/close). Fyne has no Maximize() API, but
 	// opening larger than the work area triggers GNOME's auto-maximize.
 	w.Resize(fyne.NewSize(1920, 1200))
