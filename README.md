@@ -14,9 +14,30 @@
 ![Built with Go](https://img.shields.io/badge/built%20with-Go-00ADD8.svg)
 ![OpenZFS](https://img.shields.io/badge/filesystem-OpenZFS-orange.svg)
 
-<img src="docs/screenshots/browser-full-dark.png" width="880" alt="zxplore full screen — three pools, dozens of datasets, full property dossier with sources, snapshot timeline"/>
+<img src="docs/screenshots/browser-annotated.png" width="880" alt="zxplore full screen, annotated — pool overview, dataset list, the full property dossier with every value's source, permissions, and the snapshot pane"/>
 
 </div>
+
+**What you're looking at** — one screen, no hidden state:
+
+- **Every pool at the top**: health, capacity, fragmentation, dedup ratio and
+  the last scrub result. Three pools here; the answer to "is my storage okay"
+  is the first thing on screen.
+- **Every dataset on the left**, with used / referenced / snapshot count — so
+  "what is eating my pool" is a glance, not a `zfs list` incantation.
+- **The dossier on the right**: every property *with its source*. `[local]`
+  means a human set it here, `[default]` means nobody did, `[inherited]`
+  means it came from a parent. The knobs you actually reach for — `quota`,
+  `refquota`, `reservation`, `recordsize`, `compression` — sit in the same
+  view, and **`✎ Edit` changes any of them in place**.
+- **Both permission layers** together: POSIX/ACL *and* `zfs allow`
+  delegations, which normally live in two different commands.
+- **Snapshots as objects** at the bottom: roll back, clone, browse the files
+  inside one, diff it against live, hold it.
+
+Every one of those actions maps to a plain `zfs`/`zpool` command — shown
+before it runs, written to an audit log after. Click it or type it; same
+primitives either way.
 
 `zxplore` is a fast, keyboard-driven console for the ZFS you already run.
 Three tabs — **Browser** (F1), **Transfer** (F2), **Explorer** (F3) — over one
