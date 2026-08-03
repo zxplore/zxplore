@@ -4,7 +4,7 @@
 
 # zxplore
 
-**A direct interface to your ZFS primitives — not a dashboard.**
+**The console OpenZFS never shipped — every primitive, one gesture.**
 
 *Your data, at every point in time, on any machine you choose — with a keypress.*
 
@@ -28,7 +28,13 @@ OpenZFS system**.
 It's a **primitives** tool, not a management UI: every action maps to a plain
 `zfs`/`zpool` command. Nothing hidden, nothing invented — destructive actions
 show the literal command before they run, and every executed mutation lands in
-an audit log.
+an audit log. Think of it as **a manager for ZFS itself**: OpenZFS ships
+world-class primitives and a superb CLI, but no console — no estate view, no
+dossier, no gesture layer. Others build storage *products* on top of ZFS;
+zxplore's product *is* ZFS, managed in the open — what it leaves behind is
+stock ZFS you could have typed yourself. (Its sister,
+[wgxplore](https://github.com/wgxplore/wgxplore), does the same for
+WireGuard.)
 
 <div align="center">
 <img src="docs/screenshots/dossier-dark.png" width="920" alt="The dossier up close — health verdict, every property grouped by concern with its source, one ⚙ Edit away from changing any of them"/>
