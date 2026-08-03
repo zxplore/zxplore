@@ -53,13 +53,22 @@ bump:
 
 # ── build ────────────────────────────────────────────────────────────────────
 # zxplore (GUI+TUI, cgo) and zxplore-tui (static, terminal-only, no cgo).
-build: zxplore zxplore-tui
+build: zxplore zxplore-tui zxplore-api zxplore-txn
 
 zxplore: bump $(wildcard *.go) go.mod go.sum
 	CGO_ENABLED=1 $(GO) build $(GOFLAGS) $(STAMPFLAGS) -tags gui -o zxplore .
 
 zxplore-tui: bump $(wildcard *.go) go.mod go.sum
 	CGO_ENABLED=0 $(GO) build $(GOFLAGS) $(STAMPFLAGS) -o zxplore-tui .
+
+# Transaction API — host daemon + guest client. Both fully static so the
+# client drops into any guest image (no interpreter) and the daemon runs on
+# hosts without one (FreeBSD base). Ported from Python 2026-08-03.
+zxplore-api: $(wildcard cmd/zxplore-api/*.go txn/*.go) go.mod go.sum
+	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -o zxplore-api ./cmd/zxplore-api
+
+zxplore-txn: $(wildcard cmd/zxplore-txn/*.go txn/*.go) go.mod go.sum
+	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -o zxplore-txn ./cmd/zxplore-txn
 
 # ── test ─────────────────────────────────────────────────────────────────────
 # Unit + mock-CLI suites for both build flavors. The mock tests fake
@@ -86,9 +95,9 @@ install: build
 	  install -m 0644 contrib/org.zxplore.policy $(DESTDIR)/usr/share/polkit-1/actions/; \
 	fi
 	install -m 0644 README.md docs/DESIGN.md $(DOCDIR)
-	# Optional host-side transaction API (Python) + guest CLI, when present.
-	@if [ -f bin/zxplore-api ]; then \
-	  install -m 0755 bin/zxplore-api bin/zxplore-txn $(BINDIR); \
+	# Host-side transaction API daemon + guest CLI (static Go binaries).
+	@if [ -f zxplore-api ]; then \
+	  install -m 0755 zxplore-api zxplore-txn $(BINDIR); \
 	  if [ -d /run/systemd/system ]; then \
 	    install -d $(UNITDIR); \
 	    install -m 0644 systemd/zxplore-api.service $(UNITDIR); \
@@ -107,6 +116,6 @@ uninstall:
 	rm -rf $(DOCDIR)
 
 clean:
-	rm -f zxplore zxplore-tui zxplore-bin
+	rm -f zxplore zxplore-tui zxplore-bin zxplore-api zxplore-txn
 
 .PHONY: build bump test install uninstall clean

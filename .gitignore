@@ -23,3 +23,5 @@ assets/*.png
 [C]LAUDE.md.bak.*
 .buildnum
 .testtmp/
+/zxplore-api
+/zxplore-txn
