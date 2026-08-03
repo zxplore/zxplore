@@ -34,7 +34,8 @@ dossier, no gesture layer. Others build storage *products* on top of ZFS;
 zxplore's product *is* ZFS, managed in the open — what it leaves behind is
 stock ZFS you could have typed yourself. (Its sister,
 [wgxplore](https://github.com/wgxplore/wgxplore), does the same for
-WireGuard.)
+WireGuard — and doubles as the road zxplore's replication travels:
+kernel-encrypted, to overlay addresses that never change.)
 
 <div align="center">
 <img src="docs/screenshots/dossier-dark.png" width="920" alt="The dossier up close — health verdict, every property grouped by concern with its source, one ⚙ Edit away from changing any of them"/>
