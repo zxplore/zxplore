@@ -62,8 +62,7 @@ WireGuard — and doubles as the road zxplore's replication travels:
 kernel-encrypted, to overlay addresses that never change.)
 
 <div align="center">
-<img src="docs/screenshots/dossier-annotated.png" width="920" alt="The dossier up close — health verdict, every property grouped by concern with its source, one ⚙ Edit away from changing any of them"/>
-<br/><sub>The dossier up close: health first, every property with its source, one <b>Edit</b> away from being changed.</sub>
+<img src="docs/screenshots/editmode-annotated.png" width="920" alt="zxplore in edit mode — every property becomes a live field: text boxes, dropdowns and checkboxes, with changes applying immediately as plain zfs set"/>
 </div>
 
 ---
@@ -175,23 +174,17 @@ On most systems you *back up* your data. With ZFS, the filesystem already
 
 ## A real console, end to end
 
-| | |
-|---|---|
-| <img src="docs/screenshots/snapshot-actions.png" alt="Snapshot actions"/> | **Snapshots as first-class objects.** Roll back (told exactly what gets destroyed), clone, browse its files, diff against live, hold, bookmark, destroy. |
-| <img src="docs/screenshots/server-manager-dark.png" alt="Server manager, dark theme"/> | **Any ZFS box, from here.** Saved servers, key-first: a password authorizes your key *once* — over a host-key-pinned connection — then it's never stored. |
-| <img src="docs/screenshots/boot-environments.png" alt="Boot environments"/> | **Boot environments** — derived from the pool's `bootfs`, never a hardcoded name: create restore points, roll back, delete. |
-| <img src="docs/screenshots/pools.png" alt="Pool manager"/> | **Pools** — scrub, trim, clear, import. Drill down for vdev topology with error counters, iostat, the file layout, and the two truths of free space: `zfs list` next to `df`. |
+<div align="center">
+<img src="docs/screenshots/tile-snapshots.png" width="46%" alt="Snapshot actions"/> <img src="docs/screenshots/tile-servers.png" width="46%" alt="Server manager"/>
+<br/>
+<img src="docs/screenshots/tile-be.png" width="46%" alt="Boot environments"/> <img src="docs/screenshots/tile-pools.png" width="46%" alt="Pool manager"/>
+</div>
 
 Plus the daily drivers: every property with its source, both permission
 layers (POSIX/ACL + `zfs allow`), an inline property editor, native
 encryption, full dataset lifecycle — and helpful guidance, never a blank
 window, on a host with no pools or no ZFS at all. The built-in manual (`?`)
 renders the man page in-app, even where `man` was never installed.
-
-<div align="center">
-<img src="docs/screenshots/splash-dark.png" width="46%" alt="zxplore splash, dark theme"/> <img src="docs/screenshots/browser-light.png" width="46%" alt="zxplore in light theme"/>
-<br/><sub>Instant splash · light theme included.</sub>
-</div>
 
 ## Enhanced on kldload
 
