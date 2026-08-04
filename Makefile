@@ -45,6 +45,11 @@ GOFLAGS ?= -trimpath
 # .buildnum is a local, gitignored counter that self-increments once per make
 # run (the phony `bump` prerequisite). It's stamped into both binaries via
 # -X main.buildNum and surfaces as "0.1.0 b<N>" in --version and the GUI header.
+# `bump` is written first for readability, which silently made it the default
+# goal: a bare `make` incremented the counter and built nothing, contradicting
+# this file's own header. (Same bug, same fix, as wgxplore 2026-08-03.)
+.DEFAULT_GOAL := build
+
 BUILDNUM_FILE = .buildnum
 STAMPFLAGS    = -ldflags "-X main.buildNum=$$(cat $(BUILDNUM_FILE) 2>/dev/null || echo 0)"
 
