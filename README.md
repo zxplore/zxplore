@@ -1,8 +1,9 @@
 <div align="center">
 
-<img src="assets/zxplore.svg" width="96" alt="zxplore icon"/>&nbsp;&nbsp;<img src="assets/zxplore-tui.svg" width="96" alt="zxplore terminal icon"/>
-
-# zxplore
+<h1>
+  <img src="assets/zxplore.svg" width="76" align="middle" alt=""/>
+  &nbsp;zxplore
+</h1>
 
 **The console OpenZFS never shipped — every primitive, one gesture.**
 
@@ -61,7 +62,7 @@ WireGuard — and doubles as the road zxplore's replication travels:
 kernel-encrypted, to overlay addresses that never change.)
 
 <div align="center">
-<img src="docs/screenshots/dossier-dark.png" width="920" alt="The dossier up close — health verdict, every property grouped by concern with its source, one ⚙ Edit away from changing any of them"/>
+<img src="docs/screenshots/dossier-annotated.png" width="920" alt="The dossier up close — health verdict, every property grouped by concern with its source, one ⚙ Edit away from changing any of them"/>
 <br/><sub>The dossier up close: health first, every property with its source, one <b>Edit</b> away from being changed.</sub>
 </div>
 
@@ -157,7 +158,7 @@ replicate *between two remote machines* from your laptop.
 ## The Explorer: your files, across time
 
 <div align="center">
-<img src="docs/screenshots/snapshot-explorer.png" width="920" alt="Snapshot explorer — one file's history across 33 snapshots, with size/mtime deltas and one-click restore"/>
+<img src="docs/screenshots/explorer-annotated.png" width="920" alt="Snapshot explorer — one file's history across 33 snapshots, with size/mtime deltas and one-click restore"/>
 </div>
 
 On most systems you *back up* your data. With ZFS, the filesystem already
