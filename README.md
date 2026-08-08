@@ -15,7 +15,7 @@
 ![Built with Go](https://img.shields.io/badge/built%20with-Go-00ADD8.svg)
 ![OpenZFS](https://img.shields.io/badge/filesystem-OpenZFS-orange.svg)
 
-**The family:** [kldload](https://github.com/kldload/kldload) — the substrate &middot; **zxplore** — the ZFS console &middot; [wgxplore](https://github.com/wgxplore/wgxplore) — the WireGuard console
+**The family:** [kldload](https://github.com/kldload/kldload) — the substrate &middot; **zxplore** — the ZFS console &middot; [wgxplore](https://github.com/wgxplore/wgxplore) — the WireGuard console &middot; [vmxplore](https://github.com/vmxplore/vmxplore) — the VM console
 
 <img src="docs/screenshots/browser-annotated.png" width="880" alt="zxplore full screen, annotated — pool overview, dataset list, the full property dossier with every value's source, permissions, and the snapshot pane"/>
 
