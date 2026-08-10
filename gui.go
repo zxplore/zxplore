@@ -623,16 +623,41 @@ func runGUI() {
 		}()
 	}
 
-	list := newNavList(
+	// Rows are canvas.Text rather than Label so the SELECTED dataset can be
+	// coloured on its own — a Label takes the theme foreground and every row
+	// gets it, which is why selection could only ever be a background wash.
+	// The selected row goes brand blue and bold; the rest stay foreground.
+	// It is the same blue vmxplore and wgxplore use, so the three consoles
+	// agree on what "this is the one you are working on" looks like.
+	var list *navList
+	rowText := func(o fyne.CanvasObject) *canvas.Text {
+		return o.(*fyne.Container).Objects[0].(*canvas.Text)
+	}
+	list = newNavList(
 		func() int { return len(visible) },
-		func() fyne.CanvasObject { return widget.NewLabel("template") },
+		func() fyne.CanvasObject {
+			t := canvas.NewText("template", theme.Color(theme.ColorNameForeground))
+			t.TextSize = theme.TextSize()
+			// NewPadded restores the inset a Label would have given, so the
+			// rows keep their old rhythm instead of hugging the card edge.
+			return container.NewPadded(t)
+		},
 		func(i widget.ListItemID, o fyne.CanvasObject) {
 			d := visible[i]
 			snaps := "" // counts stream in behind the fast list (Snaps<0 = not yet)
 			if d.Snaps >= 0 {
 				snaps = fmt.Sprintf("   ×%d", d.Snaps)
 			}
-			o.(*widget.Label).SetText(fmt.Sprintf("%s    %s / %s%s", d.Name, d.Used, d.Refer, snaps))
+			t := rowText(o)
+			t.Text = fmt.Sprintf("%s    %s / %s%s", d.Name, d.Used, d.Refer, snaps)
+			if int(i) == list.cursor {
+				t.Color = acBlue.at()
+				t.TextStyle = fyne.TextStyle{Bold: true}
+			} else {
+				t.Color = theme.Color(theme.ColorNameForeground)
+				t.TextStyle = fyne.TextStyle{}
+			}
+			t.Refresh()
 		},
 	)
 	// OnHighlighted (↑/↓ and hover) forwards into Select so the blue bar itself
@@ -1010,6 +1035,9 @@ func runGUI() {
 	// snapshot list for that dataset.
 	list.OnSelected = func(i widget.ListItemID) {
 		list.cursor = int(i)
+		// repaint so the row that JUST lost the cursor goes back to
+		// foreground — only the update func knows a row's colour
+		list.Refresh()
 		reloadSnaps()
 		if editing {
 			buildRight()
@@ -1247,10 +1275,42 @@ func runGUI() {
 	// unfocuses, so bare keys land here). Otherwise: Escape dismisses the open
 	// dialog/menu (= cancel); F-keys switch tabs when nothing else is focused
 	// (each list's navList handles them when focused).
+	// A container.Scroll answers the wheel and nothing else, so a long
+	// manual could only be read by dragging. The page drives its own
+	// offset: 0.9 of a screen per page leaves two lines of overlap, which
+	// is what stops a reader losing their place across a jump.
+	manScrollBy := func(frac float32) {
+		max := manScroll.Content.MinSize().Height - manScroll.Size().Height
+		if max < 0 {
+			max = 0
+		}
+		o := manScroll.Offset
+		o.Y += manScroll.Size().Height * frac
+		if o.Y < 0 {
+			o.Y = 0
+		}
+		if o.Y > max {
+			o.Y = max
+		}
+		manScroll.Offset = o
+		manScroll.Refresh()
+	}
 	w.Canvas().SetOnTypedKey(func(e *fyne.KeyEvent) {
 		if page.Visible() {
 			switch e.Name {
-			case fyne.KeyEscape, fyne.KeyReturn, fyne.KeyEnter, fyne.KeySpace:
+			case fyne.KeyPageDown, fyne.KeySpace:
+				manScrollBy(0.9)
+			case fyne.KeyPageUp:
+				manScrollBy(-0.9)
+			case fyne.KeyDown:
+				manScrollBy(0.1)
+			case fyne.KeyUp:
+				manScrollBy(-0.1)
+			case fyne.KeyHome:
+				manScroll.ScrollToTop()
+			case fyne.KeyEnd:
+				manScroll.ScrollToBottom()
+			case fyne.KeyEscape, fyne.KeyReturn, fyne.KeyEnter:
 				closeManual()
 			}
 			return
