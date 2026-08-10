@@ -1,10 +1,19 @@
+# The GNOME/KDE launcher for the zxplore GUI.
+#
+# Icon=zxplore, not zxplore-tui. The dark terminal tile was the face here
+# from 2026-08-02 until 2026-08-10, when it stood out beside vmxplore and
+# wgxplore in the dock: those two are borderless line art on transparency
+# and this was a filled tile, so the three read as two products. The mark
+# is now the same idiom in zxplore's teal. zxplore-tui.svg still ships —
+# it is the terminal edition's own face, and it should look like a
+# terminal.
 [Desktop Entry]
 Type=Application
 Name=zxplore
 GenericName=ZFS Console
 Comment=The universal ZFS console — browse, snapshot, replicate, manage
 Exec=zxplore
-Icon=zxplore-tui
+Icon=zxplore
 Terminal=false
 Categories=System;Utility;FileTools;
 Keywords=zfs;zpool;snapshot;replicate;storage;
