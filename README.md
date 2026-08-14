@@ -5,9 +5,9 @@
   &nbsp;zxplore
 </h1>
 
-**The console OpenZFS never shipped — every primitive, one gesture.**
+**A keyboard-driven console for OpenZFS. One static binary, no daemon.**
 
-*Your data, at every point in time, on any machine you choose — with a keypress.*
+*Browse datasets, restore files from snapshots, replicate over SSH.*
 
 [![License: BSD-3](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
 [![CI](https://github.com/zxplore/zxplore/actions/workflows/ci.yml/badge.svg)](https://github.com/zxplore/zxplore/actions/workflows/ci.yml)
@@ -42,12 +42,11 @@ Every one of those actions maps to a plain `zfs`/`zpool` command — shown
 before it runs, written to an audit log after. Click it or type it; same
 primitives either way.
 
-`zxplore` is a fast, keyboard-driven console for the ZFS you already run.
+`zxplore` is a keyboard-driven console for an existing OpenZFS install.
 Three tabs — **Browser** (F1), **Transfer** (F2), **Explorer** (F3) — over one
 engine: browse datasets with a full properties + permissions dossier, snapshot
-on tap, **restore any file from any snapshot**, diff two points in time, and
-point-and-shoot replicate to any pool or host over SSH — one tool, on **any
-OpenZFS system**.
+datasets, restore any file from any snapshot, diff two points in time, and
+replicate to another pool or host over SSH.
 
 It's a **primitives** tool, not a management UI: every action maps to a plain
 `zfs`/`zpool` command. Nothing hidden, nothing invented — destructive actions
@@ -67,11 +66,11 @@ kernel-encrypted, to overlay addresses that never change.)
 
 ---
 
-## Suddenly, the hard stuff is a gesture
+## What it does
 
-Twenty years of ZFS superpowers, finally at arm's length:
+Operations the CLI supports, exposed directly:
 
-- **Resizing a VM's disk is as easy as a click.** Select the zvol, `✎ Edit`,
+- **Resize a zvol.** Select it, `✎ Edit`,
   type `40G`, Enter — the LUN grows *while the VM runs*. No `virsh`, no
   spelunking, no downtime.
 - **Restoring files is a snap.** Deleted the config three days ago? `F3`,
@@ -92,14 +91,13 @@ Twenty years of ZFS superpowers, finally at arm's length:
   machines from the couch.
 
 And under every single one of these: the literal `zfs` command it ran,
-shown before it runs, written to the audit log after. Magic UX, zero magic.
+shown before it runs, written to the audit log after.
 
-## Things that used to be terminal archaeology
+## Less obvious operations
 
-ZFS has had these superpowers for twenty years. What it never had was a
-surface where they take **one gesture**. Every example below is a real flow in
-zxplore — and under each one is the exact command it runs, because that's the
-contract: you could always have typed it yourself.
+These have been in ZFS for twenty years but take several commands and exact
+argument order. Each example below is a flow in zxplore, with the command it
+runs underneath — the tool composes them, it does not replace them.
 
 **Rescue Tuesday's config file.**
 `F3` → pick the pool → pick the dataset → walk to the file → every snapshot
@@ -154,7 +152,7 @@ A saved server is a name, a host, and a key. The far side needs **nothing but
 OpenZFS and sshd** — no agent, no daemon, no install. Browse it, snapshot it,
 replicate *between two remote machines* from your laptop.
 
-## The Explorer: your files, across time
+## Explorer — files across snapshots
 
 <div align="center">
 <img src="docs/screenshots/explorer-annotated.png" width="920" alt="Snapshot explorer — one file's history across 33 snapshots, with size/mtime deltas and one-click restore"/>
@@ -172,7 +170,7 @@ On most systems you *back up* your data. With ZFS, the filesystem already
   restore any version — over live (typed confirmation) or alongside as
   `name.from-SNAPSHOT`.
 
-## A real console, end to end
+## Implementation
 
 <div align="center">
 <img src="docs/screenshots/tile-snapshots.png" width="46%" alt="Snapshot actions"/> <img src="docs/screenshots/tile-servers.png" width="46%" alt="Server manager"/>
@@ -186,7 +184,7 @@ encryption, full dataset lifecycle — and helpful guidance, never a blank
 window, on a host with no pools or no ZFS at all. The built-in manual (`?`)
 renders the man page in-app, even where `man` was never installed.
 
-## Enhanced on kldload
+## On kldload
 
 zxplore is 100% universal — but on a host running the
 [kldload](https://kldload.com) substrate it detects the platform and **lights
