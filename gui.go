@@ -1089,6 +1089,10 @@ func runGUI() {
 	// ── tabs: hand-built colored bar — Browser blue · Transfer purple ·
 	// Explorer green, with real air between the buttons (AppTabs can do
 	// neither). F1/F2/F3 and clicks both land in tabSel.
+	// Probed once, above switchTab because the key handler needs to know
+	// whether a fourth page exists before the pages are built.
+	hasContainers := HasContainerEngine()
+
 	var tabSel func(int)
 	switchTab := func(n fyne.KeyName) {
 		if tabSel == nil {
@@ -1101,6 +1105,12 @@ func runGUI() {
 			tabSel(1)
 		case fyne.KeyF3:
 			tabSel(2)
+		case fyne.KeyF4:
+			// Guarded: without an engine there is no fourth page, and
+			// selecting one would hide every tab and show nothing.
+			if hasContainers {
+				tabSel(3)
+			}
 		}
 	}
 	list.onFunc = switchTab
@@ -1119,11 +1129,21 @@ func runGUI() {
 		nil, nil, nil, explorerBody)
 	pages := []fyne.CanvasObject{split, transferTab(w, switchTab), explorerPage}
 
-	var tabBtns [3]*widget.Button
+	// Containers, only where there is an engine to manage.
+	//
+	// A CAPABILITY probe, not a distro test: gating on "is this Debian" would
+	// hide the tab on a RHEL box running podman right now, and show it on a
+	// unix-like that has no engine at all. A permanently empty tab is worse
+	// than no tab.
+	if hasContainers {
+		pages = append(pages, containersTab(w))
+	}
+
+	var tabBtns []*widget.Button
 	mkTab := func(i int, label string, a accentPair) fyne.CanvasObject {
 		b := widget.NewButton(label, func() { tabSel(i) })
 		b.Importance = widget.LowImportance
-		tabBtns[i] = b
+		tabBtns = append(tabBtns, b)
 		return container.NewThemeOverride(b, tabTint{compactTheme{theme.DefaultTheme()}, a})
 	}
 	tabGap := func() fyne.CanvasObject {
@@ -1131,11 +1151,15 @@ func runGUI() {
 		r.SetMinSize(fyne.NewSize(28, 1))
 		return r
 	}
-	tabBar := container.NewHBox(
+	barItems := []fyne.CanvasObject{
 		mkTab(0, "⌂  Browser", acBlue), tabGap(),
 		mkTab(1, "⇄  Transfer", acPurple), tabGap(),
 		mkTab(2, "🗁  Explorer", acGreen),
-	)
+	}
+	if hasContainers {
+		barItems = append(barItems, tabGap(), mkTab(3, "▣  Containers", acGold))
+	}
+	tabBar := container.NewHBox(barItems...)
 	tabSel = func(i int) {
 		for j, p := range pages {
 			if j == i {
