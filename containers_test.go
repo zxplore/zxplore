@@ -4,6 +4,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/widget"
 )
 
 // TestDecodePSHandlesBothEngines is the one that matters. docker emits ONE
@@ -187,5 +191,38 @@ func TestReplicateArgvIncremental(t *testing.T) {
 	}
 	if got[len(got)-1] != "rpool/store@tue" {
 		t.Errorf("the target snapshot must come last: %q", joined)
+	}
+}
+
+// TestListRowShapeMatchesTheUpdater guards the indexing that blanked the
+// Containers tab.
+//
+// container.NewBorder appends the CENTER object first, then top/bottom/left/
+// right in that order — so a Border built with no center has Objects
+// [left, right], and code indexing it as [center, left] type-asserts a Label
+// into a *Container and panics inside the list renderer. Fyne swallows that
+// into an empty list: `docker ps` showed four containers and the tab showed
+// none (2026-08-16).
+//
+// This asserts the shape directly rather than through the widget, so it fails
+// at `go test` instead of at a blank pane.
+func TestListRowShapeMatchesTheUpdater(t *testing.T) {
+	name := widget.NewLabel("name")
+	state := widget.NewLabel("●")
+	detail := widget.NewLabel("detail")
+	row := container.NewBorder(nil, nil, container.NewHBox(state, name), nil, detail)
+
+	if len(row.Objects) < 2 {
+		t.Fatalf("row has %d objects, want at least 2", len(row.Objects))
+	}
+	if _, ok := row.Objects[0].(*widget.Label); !ok {
+		t.Errorf("Objects[0] is %T, want the CENTER label", row.Objects[0])
+	}
+	left, ok := row.Objects[1].(*fyne.Container)
+	if !ok {
+		t.Fatalf("Objects[1] is %T, want the left HBox", row.Objects[1])
+	}
+	if len(left.Objects) != 2 {
+		t.Errorf("left box has %d objects, want state + name", len(left.Objects))
 	}
 }

@@ -239,6 +239,55 @@ type tabTint struct {
 	a accentPair
 }
 
+// btnTint colours a BUTTON by its accent, fill included.
+//
+// tabTint above paints only text and a selected fill, which is right for a
+// tab bar: an unselected tab should recede. A verb button is the opposite —
+// it should read as a solid object you can press, and a row of accent-
+// coloured text floating on the background does not.
+//
+// The resting fill is the accent at a fifth intensity. Against the near-black
+// base (0x08090c) that lands around 0x33 for a bright accent: clearly a
+// panel, still dark enough that five of them in a row do not shout. Hover
+// lifts it with a translucent wash of the same accent, so the button gets
+// brighter rather than changing colour.
+type btnTint struct {
+	fyne.Theme
+	a accentPair
+}
+
+func (t btnTint) Color(name fyne.ThemeColorName, v fyne.ThemeVariant) color.Color {
+	ac := t.a.light
+	dark := v == theme.VariantDark
+	if dark {
+		ac = t.a.dark
+	}
+	switch name {
+	case theme.ColorNameForeground, theme.ColorNameForegroundOnPrimary:
+		return ac // the label keeps the BRIGHT accent so it stays legible
+	case theme.ColorNameButton:
+		if dark {
+			return color.NRGBA{ac.R / 5, ac.G / 5, ac.B / 5, 0xff}
+		}
+		// Light mode: tint toward white instead, or the fill goes muddy.
+		return color.NRGBA{
+			uint8((int(ac.R) + 6*255) / 7), uint8((int(ac.G) + 6*255) / 7),
+			uint8((int(ac.B) + 6*255) / 7), 0xff}
+	case theme.ColorNamePrimary:
+		if dark {
+			return color.NRGBA{ac.R / 3, ac.G / 3, ac.B / 3, 0xff}
+		}
+		return color.NRGBA{
+			uint8((int(ac.R) + 3*255) / 4), uint8((int(ac.G) + 3*255) / 4),
+			uint8((int(ac.B) + 3*255) / 4), 0xff}
+	case theme.ColorNameHover:
+		// Same hue, more of it — a press target that brightens, not one that
+		// changes into a different colour.
+		return color.NRGBA{ac.R, ac.G, ac.B, 0x44}
+	}
+	return t.Theme.Color(name, v)
+}
+
 func (t tabTint) Color(name fyne.ThemeColorName, v fyne.ThemeVariant) color.Color {
 	ac := t.a.light
 	if v == theme.VariantDark {

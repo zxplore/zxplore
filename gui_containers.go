@@ -75,15 +75,31 @@ func containersTab(w fyne.Window) fyne.CanvasObject {
 			state := widget.NewLabel("")
 			detail := widget.NewLabel("")
 			detail.TextStyle = fyne.TextStyle{Italic: true}
-			return container.NewBorder(nil, nil, container.NewHBox(state, name), detail)
+			// A CENTER object is passed (the detail label) so the row has a
+			// stretching middle. Without one, NewBorder's Objects slice is
+			// just [left, right] — and indexing it as though a center were
+			// there panics inside the list renderer, which Fyne swallows into
+			// a blank list: containers existed, `docker ps` listed them, and
+			// the tab showed nothing (2026-08-16).
+			return container.NewBorder(nil, nil, container.NewHBox(state, name), nil, detail)
 		},
 		func(id widget.ListItemID, o fyne.CanvasObject) {
 			if id < 0 || id >= len(conts) {
 				return
 			}
 			c := conts[id]
-			box := o.(*fyne.Container)
-			left := box.Objects[1].(*fyne.Container)
+			box, ok := o.(*fyne.Container)
+			// Defensive: a mis-shaped template must not take the pane down.
+			if !ok || len(box.Objects) < 2 {
+				return
+			}
+			// NewBorder appends the CENTER first, then the edges in order, so
+			// Objects is [detail, leftHBox].
+			detail, dOK := box.Objects[0].(*widget.Label)
+			left, lOK := box.Objects[1].(*fyne.Container)
+			if !dOK || !lOK || len(left.Objects) < 2 {
+				return
+			}
 			// A glyph rather than a colour: this list is read at a glance and
 			// the state is the first thing anybody wants from it.
 			mark := "○"
@@ -99,7 +115,7 @@ func containersTab(w fyne.Window) fyne.CanvasObject {
 			if c.Status != "" {
 				d += "   " + c.Status
 			}
-			box.Objects[0].(*widget.Label).SetText(d)
+			detail.SetText(d)
 		},
 	)
 	contList.OnSelected = func(id widget.ListItemID) { selected = int(id) }
@@ -381,5 +397,5 @@ func encNote(encrypted bool) string {
 // exactly as safe as "Logs".
 func tintBtn(b *widget.Button, a accentPair) fyne.CanvasObject {
 	b.Importance = widget.LowImportance
-	return container.NewThemeOverride(b, tabTint{compactTheme{theme.DefaultTheme()}, a})
+	return container.NewThemeOverride(b, btnTint{compactTheme{theme.DefaultTheme()}, a})
 }
