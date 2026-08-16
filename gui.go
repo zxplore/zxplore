@@ -149,7 +149,19 @@ var (
 	acBlue   = accentPair{color.NRGBA{0x4d, 0xa6, 0xff, 0xff}, color.NRGBA{0x14, 0x66, 0xd8, 0xff}}
 	acPurple = accentPair{color.NRGBA{0xc7, 0x7d, 0xff, 0xff}, color.NRGBA{0x7a, 0x2f, 0xe0, 0xff}}
 	acCyan   = accentPair{color.NRGBA{0x33, 0xe6, 0xe6, 0xff}, color.NRGBA{0x0a, 0x8f, 0x9c, 0xff}}
-	acTopic  = accentPair{color.NRGBA{0x62, 0xa6, 0xe6, 0xff}, color.NRGBA{0x2a, 0x63, 0xc8, 0xff}} // dossier ━━ headers (slightly duller blue)
+	// Red exists for one purpose: the verbs that destroy something. Nothing
+	// else in the family is allowed to use it, so when it appears it means
+	// exactly one thing.
+	acRed = accentPair{color.NRGBA{0xff, 0x5f, 0x5f, 0xff}, color.NRGBA{0xc0, 0x2a, 0x2a, 0xff}}
+	// Crimson is a deeper red than acRed on purpose. Red halts a running
+	// thing; crimson destroys one. In a button row where Stop sits four along
+	// from Remove, one shared colour would make "recoverable in a click" look
+	// identical to "gone".
+	acCrimson = accentPair{color.NRGBA{0xe0, 0x30, 0x50, 0xff}, color.NRGBA{0x8c, 0x10, 0x28, 0xff}}
+	// Electric purple — the replicate accent. Brighter than the Transfer tab's
+	// purple so it reads as an action rather than a destination.
+	acElectric = accentPair{color.NRGBA{0xd4, 0x5f, 0xff, 0xff}, color.NRGBA{0x8a, 0x1f, 0xe8, 0xff}}
+	acTopic    = accentPair{color.NRGBA{0x62, 0xa6, 0xe6, 0xff}, color.NRGBA{0x2a, 0x63, 0xc8, 0xff}} // dossier ━━ headers (slightly duller blue)
 )
 
 // cnTopic is a custom theme color name the compactTheme resolves to acTopic, so
