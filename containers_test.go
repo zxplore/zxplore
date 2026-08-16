@@ -226,3 +226,28 @@ func TestListRowShapeMatchesTheUpdater(t *testing.T) {
 		t.Errorf("left box has %d objects, want state + name", len(left.Objects))
 	}
 }
+
+// TestPlausibleDriverRejectsProse is the guard for a failure that reported
+// itself as success: `docker info` prints its error and still exits 0, and
+// containerRun merges stderr in, so the header rendered "storage driver
+// permission denied while trying to connect to the Docker daemon socket..."
+// and the pane concluded the layers were ordinary files (fiend, 2026-08-16).
+func TestPlausibleDriverRejectsProse(t *testing.T) {
+	good := []string{"zfs\t/var/lib/docker", "overlay2\t/var/lib/docker", "btrfs", "vfs\t/x"}
+	for _, g := range good {
+		if !plausibleDriver(g) {
+			t.Errorf("rejected a real driver line: %q", g)
+		}
+	}
+	bad := []string{
+		"permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock",
+		"Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+		"", "   ",
+		"error during connect: Get \"http://%2Fvar%2Frun%2Fdocker.sock/v1.45/info\"",
+	}
+	for _, b := range bad {
+		if plausibleDriver(b) {
+			t.Errorf("accepted prose as a driver: %q", b)
+		}
+	}
+}

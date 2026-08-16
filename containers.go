@@ -76,10 +76,19 @@ func DetectEngine(timeout time.Duration) Engine {
 		// is an error message, not an empty estate.
 		out, err := containerRun(timeout, bin, "info", "--format",
 			"{{.Driver}}\t{{.DockerRootDir}}")
-		if err != nil {
+		if err != nil || !plausibleDriver(out) {
 			// podman spells the same fields differently.
-			out, err = containerRun(timeout, bin, "info", "--format",
+			out2, err2 := containerRun(timeout, bin, "info", "--format",
 				"{{.Store.GraphDriverName}}\t{{.Store.GraphRoot}}")
+			if err2 == nil && plausibleDriver(out2) {
+				out, err = out2, nil
+			} else if err == nil {
+				// Neither format produced a driver, and neither COMMAND
+				// failed. That is docker exiting 0 while printing its error,
+				// which is how "permission denied" ended up rendered as the
+				// storage driver (fiend, 2026-08-16).
+				err = fmt.Errorf("%s", strings.TrimSpace(out))
+			}
 		}
 		if err != nil {
 			// Distinguish "the daemon is down" from "you are not allowed to
@@ -92,7 +101,7 @@ func DetectEngine(timeout time.Duration) Engine {
 			// (fiend, 2026-08-16).
 			why := fmt.Sprintf("%s is installed but not answering — is the service "+
 				"running? (systemctl start %s)", bin, daemonUnit(bin))
-			if isPermissionDenied(out) {
+			if isPermissionDenied(out) || isPermissionDenied(err.Error()) {
 				why = fmt.Sprintf("%s is running, but this session may not talk to it: "+
 					"permission denied on the socket.\n\nYou are probably in the %s "+
 					"group already — group membership is applied at LOGIN, so a session "+
@@ -180,6 +189,19 @@ func (e Engine) ListContainers(timeout time.Duration) ([]Container, error) {
 	}
 	out, err := containerRun(timeout, e.Bin, "ps", "-a", "--format", "json")
 	if err != nil {
+		// The engine's own message, not "exit status 1". containerRun already
+		// merged stderr in, so the useful sentence is sitting in `out` while
+		// the error carries only the status — reporting the status alone told
+		// an operator nothing at all (fiend, 2026-08-16).
+		if msg := strings.TrimSpace(out); msg != "" {
+			if isPermissionDenied(msg) {
+				return nil, fmt.Errorf("permission denied on the %s socket.\n\n"+
+					"You are probably in the %s group already — membership is applied at "+
+					"LOGIN, so a desktop session that started before it was granted still "+
+					"lacks it. Log out and back in.", e.Bin, daemonUnit(e.Bin))
+			}
+			return nil, fmt.Errorf("%s ps: %s", e.Bin, msg)
+		}
 		return nil, fmt.Errorf("%s ps: %w", e.Bin, err)
 	}
 	rows, err := decodePS(out)
@@ -269,6 +291,9 @@ func (e Engine) ListImages(timeout time.Duration) ([]Image, error) {
 	out, err := containerRun(timeout, e.Bin, "images",
 		"--format", "{{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}")
 	if err != nil {
+		if msg := strings.TrimSpace(out); msg != "" {
+			return nil, fmt.Errorf("%s images: %s", e.Bin, msg)
+		}
 		return nil, fmt.Errorf("%s images: %w", e.Bin, err)
 	}
 	var res []Image
@@ -628,4 +653,25 @@ func isPermissionDenied(out string) bool {
 	return strings.Contains(l, "permission denied") ||
 		strings.Contains(l, "dial unix /var/run/docker.sock") ||
 		strings.Contains(l, "connect: permission denied")
+}
+
+// plausibleDriver reports whether an `info --format` result looks like a
+// storage driver rather than an error message.
+//
+// WHY THIS EXISTS: containerRun merges stderr into stdout so failures are
+// legible, and `docker info` prints its error and STILL EXITS 0. The result
+// was a permission-denied message rendered as the storage driver, with the
+// engine reported as working — the header read "storage driver permission
+// denied while trying to connect to the Docker daemon socket..." and the
+// pane concluded layers were ordinary files (fiend, 2026-08-16).
+//
+// A driver name is one short token with no spaces. Anything else is prose,
+// and prose here means something went wrong.
+func plausibleDriver(out string) bool {
+	first, _, _ := strings.Cut(strings.TrimSpace(out), "\t")
+	first = strings.TrimSpace(first)
+	if first == "" || len(first) > 24 || strings.ContainsAny(first, " :/\"") {
+		return false
+	}
+	return true
 }
