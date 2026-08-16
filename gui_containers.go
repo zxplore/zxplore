@@ -122,6 +122,15 @@ func containersTab(w fyne.Window) fyne.CanvasObject {
 
 	imgBox := container.NewVBox()
 
+	// A problem is shown WHERE THE LIST WOULD BE, not only in the header.
+	// An empty list beside working-looking buttons is indistinguishable from
+	// "you have no containers", which is how a permission error read as an
+	// app with nothing in it (fiend, 2026-08-16).
+	problem := widget.NewLabel("")
+	problem.Wrapping = fyne.TextWrapWord
+	problem.Hide()
+	listArea := container.NewStack(contList, problem)
+
 	refresh := func() {
 		e := DetectEngine(5 * time.Second)
 		cs, cerr := e.ListContainers(8 * time.Second)
@@ -146,10 +155,26 @@ func containersTab(w fyne.Window) fyne.CanvasObject {
 				}
 			}
 			imgBox.Refresh()
-			if cerr != nil {
-				// Shown in the header rather than a dialog: a refresh loop
-				// that pops a modal every few seconds is unusable.
-				header.SetText(cerr.Error())
+
+			// Say what is wrong where the list would be. No dialog: a refresh
+			// loop that pops a modal every few seconds is unusable.
+			switch {
+			case !e.Found:
+				problem.SetText(e.Why)
+				problem.Show()
+				contList.Hide()
+			case cerr != nil:
+				problem.SetText(cerr.Error())
+				problem.Show()
+				contList.Hide()
+			case len(cs) == 0:
+				problem.SetText("No containers on this host yet.\n\n" +
+					"docker run -d --name web -p 8088:80 nginx:alpine")
+				problem.Show()
+				contList.Hide()
+			default:
+				problem.Hide()
+				contList.Show()
 			}
 		})
 	}
@@ -357,7 +382,7 @@ func containersTab(w fyne.Window) fyne.CanvasObject {
 		card(container.NewBorder(
 			heading("CONTAINERS", acGold),
 			container.NewVBox(buttons, widget.NewSeparator(), storeBar),
-			nil, nil, contList)),
+			nil, nil, listArea)),
 		card(container.NewBorder(
 			heading("IMAGES", acGold), nil, nil, nil, container.NewScroll(imgBox))),
 	)

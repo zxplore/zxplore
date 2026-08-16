@@ -82,9 +82,25 @@ func DetectEngine(timeout time.Duration) Engine {
 				"{{.Store.GraphDriverName}}\t{{.Store.GraphRoot}}")
 		}
 		if err != nil {
-			return Engine{Bin: bin, Name: bin, Found: false,
-				Why: fmt.Sprintf("%s is installed but not answering — is the service running? "+
-					"(systemctl start %s)", bin, daemonUnit(bin))}
+			// Distinguish "the daemon is down" from "you are not allowed to
+			// talk to it". They need opposite actions, and the second one is
+			// nearly universal on a freshly-configured host: the docker group
+			// is applied at LOGIN, so a desktop session that started before
+			// the account was added has no access and every command fails —
+			// while the same command over a fresh ssh works, which makes it
+			// look like the app is broken rather than the session stale
+			// (fiend, 2026-08-16).
+			why := fmt.Sprintf("%s is installed but not answering — is the service "+
+				"running? (systemctl start %s)", bin, daemonUnit(bin))
+			if isPermissionDenied(out) {
+				why = fmt.Sprintf("%s is running, but this session may not talk to it: "+
+					"permission denied on the socket.\n\nYou are probably in the %s "+
+					"group already — group membership is applied at LOGIN, so a session "+
+					"that started before it was granted still lacks it. Log out and back "+
+					"in.\n\nTo check:  id -nG | tr ' ' '\\n' | grep %s",
+					bin, daemonUnit(bin), daemonUnit(bin))
+			}
+			return Engine{Bin: bin, Name: bin, Found: false, Why: why}
 		}
 		fields := strings.Split(strings.TrimSpace(out), "\t")
 		if len(fields) > 0 {
@@ -600,4 +616,16 @@ func (e Engine) StoreEncrypted(timeout time.Duration) bool {
 	}
 	v := strings.TrimSpace(out)
 	return v != "" && v != "off" && v != "-"
+}
+
+// isPermissionDenied recognises the engine refusing an unprivileged caller.
+//
+// Matched on the message because both engines exit 1 for everything, so the
+// status code cannot tell "daemon down" from "not your socket" — and those
+// two need opposite actions from whoever is reading.
+func isPermissionDenied(out string) bool {
+	l := strings.ToLower(out)
+	return strings.Contains(l, "permission denied") ||
+		strings.Contains(l, "dial unix /var/run/docker.sock") ||
+		strings.Contains(l, "connect: permission denied")
 }
