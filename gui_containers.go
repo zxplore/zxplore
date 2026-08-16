@@ -45,19 +45,30 @@ func containersTab(w fyne.Window) fyne.CanvasObject {
 
 	header := widget.NewLabel("")
 	header.Wrapping = fyne.TextWrapWord
+	// The header is a STATUS LINE, never the explanation. When something is
+	// wrong the detail goes in the list area and nowhere else — b38 printed
+	// the same six-line permission message in the header, the containers pane
+	// AND the images pane, which is three times the words and no more
+	// information (fiend, 2026-08-16).
 	setHeader := func(e Engine) {
 		switch {
 		case !e.Found:
-			header.SetText(e.Why)
+			header.SetText(e.Name + " — not reachable from this session")
 		case e.OnZFS():
-			header.SetText(fmt.Sprintf(
-				"%s · storage driver zfs · %s — every image layer is a dataset, "+
-					"so pulls are clones and layers inherit compression.",
-				e.Name, e.GraphRoot))
+			t := fmt.Sprintf("%s · storage driver zfs · %s — every image layer is "+
+				"a dataset, so pulls are clones and layers inherit compression.",
+				e.Name, e.GraphRoot)
+			if e.ViaSudo {
+				t += "  [via sudo — log out and back in to use the docker group directly]"
+			}
+			header.SetText(t)
 		default:
-			header.SetText(fmt.Sprintf(
-				"%s · storage driver %s · %s — layers are ordinary files here, "+
-					"not datasets.", e.Name, e.Driver, e.GraphRoot))
+			t := fmt.Sprintf("%s · storage driver %s · %s — layers are ordinary "+
+				"files here, not datasets.", e.Name, e.Driver, e.GraphRoot)
+			if e.ViaSudo {
+				t += "  [via sudo]"
+			}
+			header.SetText(t)
 		}
 	}
 	setHeader(engine)
@@ -143,6 +154,10 @@ func containersTab(w fyne.Window) fyne.CanvasObject {
 
 			imgBox.Objects = nil
 			switch {
+			case ierr != nil && !e.Found:
+				// The list area already carries the reason; repeating it here
+				// is three copies of one sentence.
+				imgBox.Add(widget.NewLabel("—"))
 			case ierr != nil:
 				imgBox.Add(widget.NewLabel(ierr.Error()))
 			case len(is) == 0:

@@ -47,6 +47,19 @@ type Engine struct {
 	GraphRoot string // where the layers live
 	Found     bool
 	Why       string // when Found is false
+	// ViaSudo means the socket refused this session directly and commands
+	// are going through passwordless sudo instead. Surfaced, never silent:
+	// running somebody's container engine as root without saying so is not a
+	// thing a console should do quietly.
+	ViaSudo bool
+}
+
+// argv builds the command, routed through sudo when that is how we got in.
+func (e Engine) argv(args ...string) []string {
+	if e.ViaSudo {
+		return append([]string{"sudo", "-n", e.Bin}, args...)
+	}
+	return append([]string{e.Bin}, args...)
 }
 
 // OnZFS reports whether image layers are datasets on this host.
@@ -102,6 +115,24 @@ func DetectEngine(timeout time.Duration) Engine {
 			why := fmt.Sprintf("%s is installed but not answering — is the service "+
 				"running? (systemctl start %s)", bin, daemonUnit(bin))
 			if isPermissionDenied(out) || isPermissionDenied(err.Error()) {
+				// Try passwordless sudo before reporting failure. On a
+				// workstation the operator already has sudo, so this is not
+				// new privilege — it is the same privilege by a different
+				// door, and it means the pane works during the session that
+				// predates the group grant instead of being useless until
+				// the next login.
+				if sout, serr := containerRun(timeout, "sudo", "-n", bin, "info",
+					"--format", "{{.Driver}}\t{{.DockerRootDir}}"); serr == nil && plausibleDriver(sout) {
+					f := strings.Split(strings.TrimSpace(sout), "\t")
+					se := Engine{Bin: bin, Name: bin, Found: true, ViaSudo: true}
+					if len(f) > 0 {
+						se.Driver = strings.TrimSpace(f[0])
+					}
+					if len(f) > 1 {
+						se.GraphRoot = strings.TrimSpace(f[1])
+					}
+					return se
+				}
 				why = fmt.Sprintf("%s is running, but this session may not talk to it: "+
 					"permission denied on the socket.\n\nYou are probably in the %s "+
 					"group already — group membership is applied at LOGIN, so a session "+
@@ -187,7 +218,8 @@ func (e Engine) ListContainers(timeout time.Duration) ([]Container, error) {
 	if !e.Found {
 		return nil, fmt.Errorf("%s", e.Why)
 	}
-	out, err := containerRun(timeout, e.Bin, "ps", "-a", "--format", "json")
+	a := e.argv("ps", "-a", "--format", "json")
+	out, err := containerRun(timeout, a[0], a[1:]...)
 	if err != nil {
 		// The engine's own message, not "exit status 1". containerRun already
 		// merged stderr in, so the useful sentence is sitting in `out` while
@@ -288,8 +320,8 @@ func (e Engine) ListImages(timeout time.Duration) ([]Image, error) {
 	}
 	// Tab-separated rather than json: the two engines disagree far more about
 	// image JSON than about ps, and these four fields are all the pane wants.
-	out, err := containerRun(timeout, e.Bin, "images",
-		"--format", "{{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}")
+	a := e.argv("images", "--format", "{{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}")
+	out, err := containerRun(timeout, a[0], a[1:]...)
 	if err != nil {
 		if msg := strings.TrimSpace(out); msg != "" {
 			return nil, fmt.Errorf("%s images: %s", e.Bin, msg)
@@ -341,7 +373,8 @@ func (e Engine) Verb(action, id string, timeout time.Duration) error {
 		args = append(args, "-f")
 	}
 	args = append(args, id)
-	if out, err := containerRun(timeout, e.Bin, args...); err != nil {
+	a := e.argv(args...)
+	if out, err := containerRun(timeout, a[0], a[1:]...); err != nil {
 		msg := strings.TrimSpace(out)
 		if msg == "" {
 			msg = err.Error()
@@ -359,7 +392,8 @@ func (e Engine) Logs(id string, lines int, timeout time.Duration) (string, error
 	if lines <= 0 {
 		lines = 200
 	}
-	return containerRun(timeout, e.Bin, "logs", "--tail", fmt.Sprint(lines), id)
+	a := e.argv("logs", "--tail", fmt.Sprint(lines), id)
+	return containerRun(timeout, a[0], a[1:]...)
 }
 
 // shortID trims an ID to the 12 characters every engine displays.
