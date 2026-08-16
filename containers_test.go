@@ -5,7 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"image/color"
+
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
 )
@@ -207,8 +210,11 @@ func TestReplicateArgvIncremental(t *testing.T) {
 // This asserts the shape directly rather than through the widget, so it fails
 // at `go test` instead of at a blank pane.
 func TestListRowShapeMatchesTheUpdater(t *testing.T) {
-	name := widget.NewLabel("name")
-	state := widget.NewLabel("●")
+	// Mirrors the real template: canvas.Text for the two coloured cells,
+	// a Label for the detail. Using Labels here would pass while the widget
+	// used something else, which is the drift this test exists to catch.
+	name := canvas.NewText("name", color.White)
+	state := canvas.NewText("●", color.White)
 	detail := widget.NewLabel("detail")
 	row := container.NewBorder(nil, nil, container.NewHBox(state, name), nil, detail)
 
@@ -223,7 +229,13 @@ func TestListRowShapeMatchesTheUpdater(t *testing.T) {
 		t.Fatalf("Objects[1] is %T, want the left HBox", row.Objects[1])
 	}
 	if len(left.Objects) != 2 {
-		t.Errorf("left box has %d objects, want state + name", len(left.Objects))
+		t.Fatalf("left box has %d objects, want state + name", len(left.Objects))
+	}
+	// Both cells must be colourable, or the state cannot be shown in colour.
+	for i, o := range left.Objects {
+		if _, ok := o.(*canvas.Text); !ok {
+			t.Errorf("left cell %d is %T, want *canvas.Text so it can carry a colour", i, o)
+		}
 	}
 }
 

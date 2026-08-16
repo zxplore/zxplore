@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
@@ -81,9 +82,15 @@ func containersTab(w fyne.Window) fyne.CanvasObject {
 	contList := widget.NewList(
 		func() int { return len(conts) },
 		func() fyne.CanvasObject {
-			name := widget.NewLabel("")
+			// canvas.Text, not widget.Label: a Label takes its colour from the
+			// theme and cannot be told otherwise, so every row rendered the
+			// same white and the state had to be read from a glyph shape
+			// alone. State is the first thing anybody wants from this list.
+			name := canvas.NewText("", theme.Color(theme.ColorNameForeground))
 			name.TextStyle = fyne.TextStyle{Bold: true}
-			state := widget.NewLabel("")
+			name.TextSize = theme.TextSize()
+			state := canvas.NewText("", theme.Color(theme.ColorNameForeground))
+			state.TextSize = theme.TextSize()
 			detail := widget.NewLabel("")
 			detail.TextStyle = fyne.TextStyle{Italic: true}
 			// A CENTER object is passed (the detail label) so the row has a
@@ -111,14 +118,30 @@ func containersTab(w fyne.Window) fyne.CanvasObject {
 			if !dOK || !lOK || len(left.Objects) < 2 {
 				return
 			}
-			// A glyph rather than a colour: this list is read at a glance and
-			// the state is the first thing anybody wants from it.
-			mark := "○"
-			if c.Running() {
-				mark = "●"
+			stateT, sOK := left.Objects[0].(*canvas.Text)
+			nameT, nOK := left.Objects[1].(*canvas.Text)
+			if !sOK || !nOK {
+				return
 			}
-			left.Objects[0].(*widget.Label).SetText(mark)
-			left.Objects[1].(*widget.Label).SetText(c.Name)
+			// Shape AND colour. The glyph alone survives a colourblind reader
+			// and a screenshot; the colour is what makes the list scannable
+			// without reading it.
+			mark, col := "○", acRed.at()
+			switch strings.ToLower(c.State) {
+			case "running":
+				mark, col = "●", acGreen.at()
+			case "paused":
+				mark, col = "◐", acGold.at()
+			case "created", "restarting":
+				mark, col = "◌", acGold.at()
+			}
+			stateT.Text, stateT.Color = mark, col
+			nameT.Text = c.Name
+			// The NAME carries the state colour too, so a running container
+			// reads green at a glance rather than only its bullet.
+			nameT.Color = col
+			stateT.Refresh()
+			nameT.Refresh()
 			d := c.Image
 			if c.Ports != "" {
 				d += "   " + c.Ports
