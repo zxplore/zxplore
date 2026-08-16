@@ -212,9 +212,126 @@ func containersTab(w fyne.Window) fyne.CanvasObject {
 		widget.NewButtonWithIcon("Remove", theme.DeleteIcon(), func() { act("rm") }),
 	)
 
+	// ── the estate verbs ────────────────────────────────────────────
+	// These act on the STORE, not on one container: with the zfs driver the
+	// store dataset carries the layers, the engine's database and the
+	// volumes, so a snapshot is the whole estate and a send moves it.
+	storeBar := container.NewGridWithColumns(3,
+		widget.NewButtonWithIcon("Snapshot estate", theme.StorageIcon(), func() {
+			e := widget.NewEntry()
+			e.SetText("before-" + time.Now().Format("20060102-1504"))
+			dialog.ShowForm("Snapshot the container estate", "Snapshot", "Cancel",
+				[]*widget.FormItem{{Text: "name", Widget: e}},
+				func(ok bool) {
+					if !ok {
+						return
+					}
+					go func() {
+						snap, err := engine.SnapshotStore(e.Text, 60*time.Second)
+						fyne.Do(func() {
+							if err != nil {
+								dialog.ShowError(err, w)
+								return
+							}
+							dialog.ShowInformation("Estate captured",
+								"Every image layer, the engine's database and the\n"+
+									"volumes, in one recursive snapshot:\n\n"+snap, w)
+						})
+					}()
+				}, w)
+		}),
+		widget.NewButtonWithIcon("Roll back…", theme.ContentUndoIcon(), func() {
+			go func() {
+				snaps, err := engine.ListStoreSnapshots(20 * time.Second)
+				fyne.Do(func() {
+					if err != nil {
+						dialog.ShowError(err, w)
+						return
+					}
+					if len(snaps) == 0 {
+						dialog.ShowInformation("Nothing to roll back to",
+							"Take a snapshot of the estate first.", w)
+						return
+					}
+					opts := make([]string, 0, len(snaps))
+					for _, sn := range snaps {
+						opts = append(opts, sn.Name+"   ("+sn.Used+")")
+					}
+					sel := widget.NewSelect(opts, nil)
+					sel.SetSelected(opts[len(opts)-1])
+					dialog.ShowCustomConfirm("Roll the estate back", "Roll back", "Cancel",
+						container.NewVBox(
+							widget.NewLabel("Every image, container and volume returns to this "+
+								"point. Snapshots newer than it are destroyed."),
+							widget.NewLabel("The engine must be stopped first — this refuses "+
+								"while it is running, because rolling storage out from under "+
+								"an open store corrupts it."),
+							sel),
+						func(ok bool) {
+							if !ok {
+								return
+							}
+							tag := strings.Fields(sel.Selected)[0]
+							go func() {
+								err := engine.RollbackStore(tag, 120*time.Second)
+								fyne.Do(func() {
+									if err != nil {
+										dialog.ShowError(err, w)
+										return
+									}
+									dialog.ShowInformation("Rolled back",
+										"The estate is back at "+tag+".", w)
+								})
+								refresh()
+							}()
+						}, w)
+				})
+			}()
+		}),
+		widget.NewButtonWithIcon("Replicate…", theme.MailForwardIcon(), func() {
+			go func() {
+				ds, ok := engine.StoreDataset(10 * time.Second)
+				enc := engine.StoreEncrypted(10 * time.Second)
+				snaps, _ := engine.ListStoreSnapshots(20 * time.Second)
+				fyne.Do(func() {
+					if !ok {
+						dialog.ShowError(fmt.Errorf(
+							"the container store is not on a ZFS dataset, so there is "+
+								"nothing to replicate as a unit (driver is %q)", engine.Driver), w)
+						return
+					}
+					latest := "<take a snapshot first>"
+					if len(snaps) > 0 {
+						latest = snaps[len(snaps)-1].Full
+					}
+					argv := strings.Join(ReplicateArgv(latest, "", enc), " ")
+					// Shown, not run. The far side needs a host, a key and a
+					// receiving dataset, and zxplore already has a Transfer
+					// tab built for exactly that conversation.
+					cmd := widget.NewMultiLineEntry()
+					cmd.SetText(argv + " | ssh OTHER-HOST zfs recv -F " + ds)
+					cmd.Wrapping = fyne.TextWrapWord
+					d := dialog.NewCustom("Replicate the container estate", "Close",
+						container.NewVBox(
+							widget.NewLabel("One recursive stream carries every image layer, "+
+								"the engine's database and the volumes."),
+							widget.NewLabel(encNote(enc)),
+							cmd,
+							widget.NewLabel("After the first send, add -I <previous-snapshot> "+
+								"and only the delta travels."),
+						), w)
+					d.Resize(fyne.NewSize(760, 340))
+					d.Show()
+				})
+			}()
+		}),
+	)
+
 	body := container.NewHSplit(
 		card(container.NewBorder(
-			heading("CONTAINERS", acGold), buttons, nil, nil, contList)),
+			heading("CONTAINERS", acGold),
+			container.NewVBox(buttons, widget.NewSeparator(), storeBar),
+			nil, nil, contList)),
 		card(container.NewBorder(
 			heading("IMAGES", acGold), nil, nil, nil, container.NewScroll(imgBox))),
 	)
@@ -232,4 +349,14 @@ func containersTab(w fyne.Window) fyne.CanvasObject {
 		}
 	}()
 	return page
+}
+
+// encNote explains why the command says what it says.
+func encNote(encrypted bool) string {
+	if encrypted {
+		return "This pool is encrypted, so the stream is raw (-w): `zfs send -R` " +
+			"refuses on an encrypted dataset. The blocks travel still encrypted; " +
+			"the far side needs the key to mount them, not to store them."
+	}
+	return "This pool is not encrypted, so the stream carries properties directly."
 }
