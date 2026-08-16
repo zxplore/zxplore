@@ -10,6 +10,9 @@
 .Nm
 .Op Fl -tui
 .Op Fl -version
+.Nm
+.Fl -containers
+.Op Ar command Op Ar name
 .Sh DESCRIPTION
 .Nm
 is a direct console for OpenZFS: browse datasets and snapshots with a full
@@ -396,6 +399,52 @@ are driven by plain
 against the boot dataset DERIVED from the pool's
 .Ql bootfs
 property \(em correct regardless of what the environment is named.
+.Sh CONTAINERS
+On a host whose container engine uses the ZFS storage driver, every image
+layer is a real dataset and the store also holds the engine's database, the
+layer graph and the volumes.
+The whole container estate is therefore one snapshottable, replicable unit,
+and this is the terminal path to it.
+.Pp
+Both engines are handled by the same code path:
+.Xr docker 1
+where it is installed, otherwise
+.Xr podman 1 .
+Neither is required \(em without one, the tab and these commands are absent
+rather than empty.
+.Bl -tag -width "--containers snapshot NAME"
+.It Nm Fl -containers
+What is running, what images are local, and \(em the point \(em which
+storage driver is in use and whether layers are datasets or ordinary files.
+.It Nm Fl -containers Cm snapshots
+List the estate's snapshots.
+.It Nm Fl -containers Cm snapshot Ar name
+Capture every image layer, the engine's database and the volumes in one
+recursive snapshot.
+.It Nm Fl -containers Cm rollback Ar name
+Return all of it to that point.
+The engine must be stopped first: rolling storage out from under an open
+store corrupts it, and this refuses while the daemon is answering.
+.It Nm Fl -containers Cm replicate
+Print the
+.Xr zfs 8
+send command that moves the estate to another host, incremental form
+included.
+It prints rather than runs \(em the far side is a host, a key and a receiving
+dataset this command cannot know.
+.El
+.Pp
+On an encrypted pool the printed command uses a raw stream
+.Pq Fl w ,
+because
+.Ql zfs send -R
+refuses on an encrypted dataset.
+The blocks stay encrypted in transit; the receiving host needs the key to
+mount them, not to store them.
+.Pp
+.Sy Note :
+rollback and snapshot need privilege and will elevate.
+Listing works unprivileged wherever the engine itself does.
 .Sh THE TERMINAL UI
 .Nm Fl -tui
 (and the static
@@ -516,6 +565,23 @@ Review everything
 has ever changed, newest last:
 .Pp
 .Dl $ tail ~/.local/state/zxplore/audit.log
+.Pp
+Snapshot the container estate before an upgrade, then put it back if the
+upgrade breaks:
+.Bd -literal -offset indent
+zxplore --containers snapshot before-upgrade
+# ... the upgrade eats the database ...
+systemctl stop docker
+zxplore --containers rollback before-upgrade
+systemctl start docker
+.Ed
+.Pp
+Move an entire container estate \(em images, containers and volumes \(em to
+another machine:
+.Bd -literal -offset indent
+zxplore --containers snapshot move
+zxplore --containers replicate   # prints the send command
+.Ed
 .Sh SEE ALSO
 .Xr ssh 1 ,
 .Xr ssh-copy-id 1 ,
