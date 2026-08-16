@@ -43,16 +43,36 @@ func main() {
 			fmt.Println("zxplore " + versionFull())
 			return
 		case "--help", "-h":
-			fmt.Print("usage: zxplore [--tui] [--version]\n\n" +
+			fmt.Print("usage: zxplore [--tui] [--containers [cmd]] [--version]\n\n" +
 				"  (no flags)   native GUI (static builds start the TUI)\n" +
 				"  --tui        terminal UI — headless / SSH\n" +
 				"  --version    print version and exit\n\n" +
+				"CONTAINERS — the estate on ZFS, from a terminal\n" +
+				"  --containers                 what is running, and what it sits on\n" +
+				"  --containers snapshots       list estate snapshots\n" +
+				"  --containers snapshot NAME   capture every layer, the engine\n" +
+				"                               database and the volumes, at once\n" +
+				"  --containers rollback NAME   put all of it back (engine stopped)\n" +
+				"  --containers replicate       print the send command for another host\n\n" +
+				"With the zfs storage driver every image layer is a dataset, so the\n" +
+				"whole container estate snapshots and replicates as one unit.\n\n" +
 				"Documentation: man zxplore\n")
 			return
 		case "--tui":
 			elevate() // safe in a terminal — root inherits the tty
 			runTUI()
 			return
+		case "--containers":
+			// Terminal path to the container estate. The Containers TAB is a
+			// window, and the people this feature is for work over ssh on
+			// machines with no display — a capability that exists only in a
+			// GUI does not exist for them.
+			//
+			// elevate() because snapshot and rollback shell out to zfs. Read
+			// commands work unprivileged where the engine allows it, and
+			// paying the sudo cost once keeps the dispatch simple.
+			elevate()
+			os.Exit(runContainersCLI(os.Args[2:]))
 		}
 	}
 	// GUI: do NOT sudo-reexec — root can't reach the user's Wayland/X display.
