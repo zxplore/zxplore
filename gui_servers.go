@@ -488,11 +488,54 @@ func offerHostKeyReset(w fyne.Window, srv Server, retry func()) {
 
 // showPublicKey displays a public key in a read-only field for copy/paste (so it
 // can be authorized manually where a password login isn't wanted).
+// showPublicKey presents the generated public key with a way to actually take
+// it somewhere.
+//
+// WHY THE BUTTONS: the key used to sit alone in a MultiLineEntry, on the
+// assumption that selectable text is copyable text. Under Wayland it often is
+// not — selection lands in the primary buffer rather than the clipboard, and a
+// dialog that steals focus loses the selection anyway. An operator was left
+// looking at a key they could read and could not take (2026-08-17). An
+// explicit button does not depend on any of that.
+//
+// The second button copies the whole authorize line rather than the key, because
+// that is the actual next step: this key has to end up in a remote
+// authorized_keys, and pasting a command beats pasting a key and then
+// remembering the shell around it.
 func showPublicKey(w fyne.Window, pub string) {
+	pub = strings.TrimSpace(pub)
+
 	e := widget.NewMultiLineEntry()
 	e.SetText(pub)
 	e.Wrapping = fyne.TextWrapBreak
-	d := dialog.NewCustom("Public key — copy to the server's authorized_keys", "Close", e, w)
-	d.Resize(fyne.NewSize(560, 200))
+
+	status := widget.NewLabel("")
+
+	// App.Clipboard(), not Window.Clipboard(): the latter is deprecated as of
+	// Fyne 2.8 and routes to the same place anyway.
+	put := func(text, said string) {
+		fyne.CurrentApp().Clipboard().SetContent(text)
+		status.SetText(said)
+	}
+
+	copyKey := widget.NewButtonWithIcon("Copy key", theme.ContentCopyIcon(), func() {
+		put(pub, "✓ key copied to the clipboard")
+	})
+	copyKey.Importance = widget.HighImportance
+
+	copyCmd := widget.NewButtonWithIcon("Copy authorize command", theme.ComputerIcon(), func() {
+		put("mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '"+pub+
+			"' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys",
+			"✓ command copied — paste it into a shell on the server")
+	})
+
+	body := container.NewBorder(
+		nil,
+		container.NewVBox(container.NewHBox(copyKey, copyCmd), status),
+		nil, nil, e)
+
+	d := dialog.NewCustom("Public key — put this in the server's authorized_keys",
+		"Close", body, w)
+	d.Resize(fyne.NewSize(620, 280))
 	d.Show()
 }
