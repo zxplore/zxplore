@@ -24,8 +24,8 @@
 **What you're looking at** — one screen, no hidden state:
 
 - **Every pool at the top**: health, capacity, fragmentation, dedup ratio and
-  the last scrub result. Three pools here; the answer to "is my storage okay"
-  is the first thing on screen.
+  the last scrub result. The answer to "is my storage okay" is the first thing
+  on screen, before you have clicked anything.
 - **Every dataset on the left**, with used / referenced / snapshot count — so
   "what is eating my pool" is a glance, not a `zfs list` incantation.
 - **The dossier on the right**: every property *with its source*. `[local]`
@@ -43,10 +43,11 @@ before it runs, written to an audit log after. Click it or type it; same
 primitives either way.
 
 `zxplore` is a keyboard-driven console for an existing OpenZFS install.
-Three tabs — **Browser** (F1), **Transfer** (F2), **Explorer** (F3) — over one
-engine: browse datasets with a full properties + permissions dossier, snapshot
-datasets, restore any file from any snapshot, diff two points in time, and
-replicate to another pool or host over SSH.
+Four tabs — **Browser** (F1), **Transfer** (F2), **Explorer** (F3),
+**Containers** (F4) — over one engine: browse datasets with a full properties
++ permissions dossier, snapshot datasets, restore any file from any snapshot,
+diff two points in time, replicate to another pool or host over SSH, and see
+the container estate as the storage it actually is.
 
 It's a **primitives** tool, not a management UI: every action maps to a plain
 `zfs`/`zpool` command. Nothing hidden, nothing invented — destructive actions
@@ -86,6 +87,9 @@ Operations the CLI supports, exposed directly:
   pool's real `bootfs` — restore point before, rollback after, no sweat.
 - **Capping a runaway directory is typing a number.** `quota=50G`, Enter.
   Guaranteeing space for the database is the same move on `reservation`.
+- **Containers stop being opaque.** Every image layer is a dataset, so the
+  estate is storage you can snapshot, roll back and replicate — and the header
+  tells you plainly when your driver is `overlay` and it is not.
 - **Every ZFS box you own is local now.** A saved server is a name and a
   key; the far side needs nothing but sshd. Replicate between two *remote*
   machines from the couch.
@@ -147,6 +151,10 @@ distro installed it.
 command line.** Right-click → *Unlock* — the passphrase travels on stdin,
 invisible to `ps`, absent from every log including zxplore's own audit log.
 
+<div align="center">
+<img src="docs/screenshots/transfer-annotated.png" width="920" alt="Transfer tab — two panes, either side local or remote, with the saved-server manager open"/>
+</div>
+
 **Drive a machine on the other side of the planet like it's local.**
 A saved server is a name, a host, and a key. The far side needs **nothing but
 OpenZFS and sshd** — no agent, no daemon, no install. Browse it, snapshot it,
@@ -155,7 +163,7 @@ replicate *between two remote machines* from your laptop.
 ## Explorer — files across snapshots
 
 <div align="center">
-<img src="docs/screenshots/explorer-annotated.png" width="920" alt="Snapshot explorer — one file's history across 33 snapshots, with size/mtime deltas and one-click restore"/>
+<img src="docs/screenshots/explorer-annotated.png" width="920" alt="Snapshot explorer — one path across every snapshot that holds it, with size and mtime per copy, and restore over live or alongside"/>
 </div>
 
 On most systems you *back up* your data. With ZFS, the filesystem already
@@ -170,6 +178,38 @@ On most systems you *back up* your data. With ZFS, the filesystem already
   restore any version — over live (typed confirmation) or alongside as
   `name.from-SNAPSHOT`.
 
+## Containers — the storage under them
+
+<div align="center">
+<img src="docs/screenshots/containers-annotated.png" width="920" alt="Containers tab — the detected engine and its storage driver stated plainly, containers by name, and every image with its real on-disk size"/>
+</div>
+
+A container image is not an opaque blob on this substrate. With the ZFS
+storage driver **every layer is a real dataset**, so pulls are clone-cheap and
+layers inherit the pool's compression — and the dataset tree fills up with
+hash-named datasets nobody can read. On one fresh box, 20 of 58 datasets were
+image layers with `legacy` mountpoints and nothing to identify them. The
+`F4` tab is the readable half of that same information: containers **by name**,
+next to the storage they occupy.
+
+- **It names the engine and the driver, and does not flatter either.** docker
+  or podman, whichever is installed, through one code path — podman implements
+  docker's CLI surface deliberately, and every command used here takes the same
+  arguments on both. The header states the storage driver and says outright
+  when layers are **ordinary files rather than datasets**, because `overlay` on
+  a ZFS box is a real and common configuration, and a tool that implies
+  otherwise is lying about what a snapshot would capture.
+- **Snapshot the whole estate** — one ZFS snapshot across the container root,
+  then roll it back or replicate it like any other dataset. The estate verbs
+  work from a terminal too (`zxplore --containers snapshot <name>`).
+- **Read-only until you press a button.** Listing never mutates; `start`,
+  `stop`, `restart` and `remove` are the four verbs worth a button, coloured
+  by what they do.
+
+Local host only, deliberately: zxplore drives remote *pools* over ssh, but a
+remote container engine is a different trust and socket story, and pretending
+otherwise would show an empty list on a box that has plenty.
+
 ## Implementation
 
 <div align="center">
@@ -180,7 +220,8 @@ On most systems you *back up* your data. With ZFS, the filesystem already
 
 Plus the daily drivers: every property with its source, both permission
 layers (POSIX/ACL + `zfs allow`), an inline property editor, native
-encryption, full dataset lifecycle — and helpful guidance, never a blank
+encryption, the container estate and the datasets under it, full dataset
+lifecycle — and helpful guidance, never a blank
 window, on a host with no pools or no ZFS at all. The built-in manual (`?`)
 renders the man page in-app, even where `man` was never installed.
 
@@ -285,6 +326,12 @@ zxplore            # the native GUI console
 zxplore --tui      # terminal UI from the full binary
 zxplore-tui        # the static terminal binary (same UI)
 man zxplore        # full documentation (also built in: press ?)
+
+zxplore --containers list              # containers and images, with sizes
+zxplore --containers snapshot <name>   # snapshot the whole container root
+zxplore --containers snapshots         # what estate snapshots exist
+zxplore --containers rollback <name>   # put the estate back
+zxplore --containers replicate         # send the estate to another box
 ```
 
 The TUI is a full console, not a fallback — browser, transfer, the snapshot
@@ -292,8 +339,8 @@ file explorer, and pool drill-downs, with a `:` command bar, `/` filter,
 vim keys, and a `?` key overlay. It is **read-only by default**: mutations
 need `:rw` first, and destroys demand retyping the target's name.
 
-**Keys:** `F1`/`F2`/`F3` switch Browser / Transfer / Explorer · `?` opens the
-manual · `Tab` hop between panes · `↑↓` `PgUp`/`PgDn` `Home`/`End` move ·
+**Keys:** `F1`/`F2`/`F3`/`F4` switch Browser / Transfer / Explorer /
+Containers · `?` opens the manual · `Tab` hop between panes · `↑↓` `PgUp`/`PgDn` `Home`/`End` move ·
 `Ctrl+F` (or `/`) find · **right-click a dataset** for the full lifecycle
 menu · `Enter` or click a snapshot for actions · `Esc` dismiss · `Alt+Q` quit.
 

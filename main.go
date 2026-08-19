@@ -22,7 +22,7 @@ import (
 
 // version is the zxplore release (shown by --version and in the GUI header).
 // Must match the release tag — ci enforces tag == "v" + version on tag builds.
-const version = "1.1.0"
+const version = "1.2.0"
 
 // buildNum is stamped by the Makefile (-X main.buildNum=<n>) from the
 // self-incrementing .buildnum counter; empty in a bare `go build`.
