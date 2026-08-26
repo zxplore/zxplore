@@ -222,11 +222,46 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 				if !ok {
 					return
 				}
+				// THIS is the transfer screen the Transfer buttons drive, and it
+				// is the one an operator actually uses to move a dataset. It ran
+				// RunReplicate — no progress at all — so a 789G send showed an
+				// empty window for twelve minutes while zfs printed a progress
+				// line every second into a buffer nobody read.
+				//
+				// The context menu in gui_context.go was given a progress dialog
+				// first and this was missed, so the fix appeared to do nothing:
+				// the binary was new, the send carried -vP, and the screen still
+				// said nothing because the caller here had not changed. Two
+				// entry points, one fixed. (onyx, 2026-08-26.)
+				bar := widget.NewProgressBar()
+				bar.Min, bar.Max = 0, 1
+				status := widget.NewLabel("starting…")
+				prog := dialog.NewCustomWithoutButtons("Replicating",
+					container.NewVBox(
+						widget.NewLabel(fmt.Sprintf("%s  →  %s:%s", snap, dst.host.Label(), dstPath)),
+						bar, status),
+					w)
+				prog.Show()
+
 				go func() {
-					// RunReplicate — not a raw pkexec — so the pipeline is
-					// audit-logged like every other mutation.
-					err := RunReplicate(pipeline)
+					// RunReplicateProgress — not a raw pkexec — so the pipeline is
+					// audit-logged like every other mutation, and reports as it runs.
+					err := RunReplicateProgress(pipeline, func(sent, total int64) {
+						fyne.Do(func() {
+							if total > 0 {
+								bar.SetValue(float64(sent) / float64(total))
+								status.SetText(fmt.Sprintf("%s of %s  (%.1f%%)",
+									humanBytes(sent), humanBytes(total),
+									100*float64(sent)/float64(total)))
+							} else {
+								// The size line has not arrived yet; show what has
+								// moved rather than dividing by zero.
+								status.SetText(humanBytes(sent) + " sent")
+							}
+						})
+					})
 					fyne.Do(func() {
+						prog.Hide()
 						if err != nil {
 							// A permission refusal on a remote end is a missing
 							// zfs allow — offer the grant and retry.
