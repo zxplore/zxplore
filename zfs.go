@@ -879,8 +879,35 @@ func parseSentBytes(f string) int64 {
 // an error message is not much help either if it was thrown away in favour of
 // progress.
 func RunReplicateProgress(pipeline string, onProgress func(sent, total int64)) error {
+	return RunReplicateCancellable(pipeline, onProgress, nil)
+}
+
+// pgidRe catches the marker the wrapper prints before exec'ing the pipeline.
+var pgidRe = regexp.MustCompile(`^ZXPGID:(\d+)$`)
+
+// RunReplicateCancellable is RunReplicateProgress plus a way to stop it.
+//
+// CANCELLING IS NOT "kill the child". The pipeline runs under pkexec, so zfs
+// send and zfs recv are owned by ROOT while zxplore is not. Killing the process
+// we spawned reaps the unprivileged wrapper and leaves both halves of the
+// transfer running — verified on onyx 2026-08-26, where stopping a replication
+// needed sudo kill on the two root PIDs by hand. A Cancel button that did that
+// would look like it worked and would not have.
+//
+// So the pipeline is wrapped in `setsid`, making the root shell a process-group
+// leader, and it prints its own PID as ZXPGID:<n> before exec'ing. Cancelling
+// signals the whole group as root via pkexec, which reaches send and recv both.
+// The receive is `-s`, so a cancelled transfer leaves a resume token rather
+// than a corrupt dataset.
+//
+// onCancel, if non-nil, is handed a func the caller can invoke to stop the run.
+// It is called once, as soon as the group id is known — a cancel button should
+// stay disabled until then rather than pretend it can act.
+func RunReplicateCancellable(pipeline string, onProgress func(sent, total int64), onCancel func(cancel func())) error {
 	auditLog(LocalHost(), []string{"sh", "-c", pipeline})
-	cmd := localCmd("pkexec", "sh", "-c", pipeline)
+	// setsid: own process group, so one signal reaches every stage of the pipe.
+	wrapped := "echo ZXPGID:$$ >&2; exec " + pipeline
+	cmd := localCmd("pkexec", "setsid", "sh", "-c", wrapped)
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		return fmt.Errorf("replicate: %v", err)
@@ -891,12 +918,27 @@ func RunReplicateProgress(pipeline string, onProgress func(sent, total int64)) e
 
 	var total, sent int64
 	var tail []string
+	var pgid int
 	sc := bufio.NewScanner(stderr)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
 		line := strings.TrimRight(sc.Text(), "\r")
 		if tail = append(tail, line); len(tail) > 12 {
 			tail = tail[1:]
+		}
+		if m := pgidRe.FindStringSubmatch(line); m != nil {
+			if v, e := strconv.Atoi(m[1]); e == nil {
+				pgid = v
+				if onCancel != nil {
+					onCancel(func() {
+						// Negative PID = the whole group, as root. TERM first so
+						// zfs can close the stream cleanly and leave a usable
+						// resume token; the caller may follow with a KILL.
+						_ = localCmd("pkexec", "kill", "-TERM", "--", "-"+strconv.Itoa(pgid)).Run()
+					})
+				}
+			}
+			continue
 		}
 		if m := sendSizeRe.FindStringSubmatch(line); m != nil {
 			if v, e := strconv.ParseInt(m[1], 10, 64); e == nil {

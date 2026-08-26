@@ -236,32 +236,102 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 				bar := widget.NewProgressBar()
 				bar.Min, bar.Max = 0, 1
 				status := widget.NewLabel("starting…")
+				rate := widget.NewLabel("")
+				// Disabled until the wrapper reports its process group: until then
+				// there is nothing to signal, and a button that does nothing is
+				// worse than one that is visibly not ready yet.
+				var cancelFn func()
+				cancelled := false
+				btnCancel := widget.NewButton("Cancel", nil)
+				btnCancel.Disable()
+				btnCancel.OnTapped = func() {
+					if cancelFn == nil {
+						return
+					}
+					cancelled = true
+					btnCancel.Disable()
+					status.SetText("cancelling…")
+					go cancelFn()
+				}
 				prog := dialog.NewCustomWithoutButtons("Replicating",
 					container.NewVBox(
 						widget.NewLabel(fmt.Sprintf("%s  →  %s:%s", snap, dst.host.Label(), dstPath)),
-						bar, status),
+						bar, status, rate, btnCancel),
 					w)
 				prog.Show()
 
+				// Rate + ETA from consecutive ticks. zfs emits about one a
+				// second; deriving from the last interval rather than the whole
+				// run means the figure reflects what the link is doing NOW,
+				// which is what someone watching it actually wants to know.
+				var lastSent int64
+				lastAt := time.Now()
+
 				go func() {
-					// RunReplicateProgress — not a raw pkexec — so the pipeline is
-					// audit-logged like every other mutation, and reports as it runs.
-					err := RunReplicateProgress(pipeline, func(sent, total int64) {
-						fyne.Do(func() {
-							if total > 0 {
-								bar.SetValue(float64(sent) / float64(total))
-								status.SetText(fmt.Sprintf("%s of %s  (%.1f%%)",
-									humanBytes(sent), humanBytes(total),
-									100*float64(sent)/float64(total)))
-							} else {
-								// The size line has not arrived yet; show what has
-								// moved rather than dividing by zero.
-								status.SetText(humanBytes(sent) + " sent")
+					// RunReplicateCancellable — not a raw pkexec — so the pipeline
+					// is audit-logged like every other mutation, reports as it
+					// runs, and can be stopped.
+					err := RunReplicateCancellable(pipeline,
+						func(sent, total int64) {
+							now := time.Now()
+							dt := now.Sub(lastAt).Seconds()
+							var bps float64
+							if dt >= 0.5 && sent > lastSent {
+								bps = float64(sent-lastSent) / dt
+								lastSent, lastAt = sent, now
 							}
+							fyne.Do(func() {
+								if total > 0 {
+									bar.SetValue(float64(sent) / float64(total))
+									status.SetText(fmt.Sprintf("%s of %s  (%.1f%%)",
+										humanBytes(sent), humanBytes(total),
+										100*float64(sent)/float64(total)))
+								} else {
+									// The size line has not arrived yet; show what
+									// has moved rather than dividing by zero.
+									status.SetText(humanBytes(sent) + " sent")
+								}
+								if bps > 0 {
+									eta := ""
+									if total > sent {
+										secs := float64(total-sent) / bps
+										eta = fmt.Sprintf("   ETA %s", (time.Duration(secs) * time.Second).Round(time.Second))
+									}
+									rate.SetText(fmt.Sprintf("%s/s%s", humanBytes(int64(bps)), eta))
+								}
+							})
+						},
+						func(cancel func()) {
+							cancelFn = cancel
+							fyne.Do(btnCancel.Enable)
 						})
-					})
 					fyne.Do(func() {
 						prog.Hide()
+						if cancelled {
+							// Say what is actually on disk. `zfs recv -s` leaves a
+							// resumable partial, not a corrupt dataset and not
+							// nothing — and a leftover token silently turns the
+							// NEXT transfer into an incremental, which is its own
+							// surprise. So offer the choice rather than picking.
+							dialog.ShowConfirm("Cancelled",
+								fmt.Sprintf("Transfer stopped.\n\n%s holds a partial receive with a resume token —\nrunning this transfer again continues from where it stopped.\n\nDiscard the partial instead?", dstPath),
+								func(discard bool) {
+									if !discard {
+										dst.reload()
+										return
+									}
+									go func() {
+										e := DestroyDataset(dst.host, dstPath)
+										fyne.Do(func() {
+											if e != nil {
+												dialog.ShowError(e, w)
+											}
+											dst.reload()
+										})
+									}()
+								}, w)
+							return
+						}
 						if err != nil {
 							// A permission refusal on a remote end is a missing
 							// zfs allow — offer the grant and retry.
