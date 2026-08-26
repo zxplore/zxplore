@@ -1336,6 +1336,17 @@ func DestroyBookmark(h Host, bookmark string) error { return zfsAdmin(h, "destro
 // never load on the wire or the target — the offsite box can't read the data.
 // The target is received readonly + non-automounting so it can't drift out of
 // the incremental chain. Works for any local/remote combination.
+// IsRawSend reports whether a pipeline built by ReplicatePipeline carries -w,
+// i.e. the source dataset is encrypted and the stream stays encrypted the whole
+// way — the key is never loaded, so the destination holds ciphertext it cannot
+// read. Worth telling the operator: it is the difference between "a copy" and
+// "a copy nobody at the other end can open", and it is not obvious from the
+// dataset name.
+func IsRawSend(pipeline string) bool {
+	return strings.Contains(pipeline, "zfs send -vP -w ") ||
+		strings.Contains(pipeline, " -w -i ")
+}
+
 func ReplicatePipeline(srcHost Host, srcSnap string, dstHost Host, dstPath string) string {
 	srcDs := srcSnap
 	if i := strings.IndexByte(srcSnap, '@'); i >= 0 {

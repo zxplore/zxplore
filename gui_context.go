@@ -140,10 +140,16 @@ func datasetContextMenu(h Host, dataset string, w fyne.Window, refresh, onEdit f
 					bar := widget.NewProgressBar()
 					bar.Min, bar.Max = 0, 1
 					status := widget.NewLabel("starting…")
+					pipe := ReplicatePipeline(h, "", s.toHost(), dstPath)
+					head := container.NewVBox(
+						widget.NewLabel(fmt.Sprintf("%s  →  %s:%s", dataset, s.sshTarget(), dstPath)))
+					if IsRawSend(pipe) {
+						lock := widget.NewLabel("🔒  encrypted end to end — raw send, key never loaded")
+						lock.TextStyle = fyne.TextStyle{Bold: true}
+						head.Add(lock)
+					}
 					prog := dialog.NewCustomWithoutButtons("Replicating",
-						container.NewVBox(
-							widget.NewLabel(fmt.Sprintf("%s  →  %s:%s", dataset, s.sshTarget(), dstPath)),
-							bar, status),
+						container.NewVBox(head, bar, status),
 						w)
 					prog.Show()
 
