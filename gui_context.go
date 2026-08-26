@@ -11,12 +11,12 @@ package main
 
 import (
 	"fmt"
-	"strings"
-	"time"
-
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
+	"strings"
+	"time"
 )
 
 // latestOrNewSnapshot returns the newest snapshot of a dataset, taking one if it
@@ -128,13 +128,55 @@ func datasetContextMenu(h Host, dataset string, w fyne.Window, refresh, onEdit f
 					if !ok {
 						return
 					}
-					runOp("replicate", func() error {
+					// A replication is the longest thing this tool does —
+					// 789G at ~1.2GB/s is eleven minutes — and it used to run
+					// behind a dialog that appeared only when it FINISHED. zfs
+					// prints a progress line every second the whole time; the
+					// window simply never showed it (reported 2026-08-26).
+					//
+					// NewCustomWithoutButtons + widget.ProgressBar rather than
+					// dialog.NewProgress: the latter is deprecated in fyne 2.8
+					// and its own doc says to build it this way.
+					bar := widget.NewProgressBar()
+					bar.Min, bar.Max = 0, 1
+					status := widget.NewLabel("starting…")
+					prog := dialog.NewCustomWithoutButtons("Replicating",
+						container.NewVBox(
+							widget.NewLabel(fmt.Sprintf("%s  →  %s:%s", dataset, s.sshTarget(), dstPath)),
+							bar, status),
+						w)
+					prog.Show()
+
+					go func() {
 						snap, err := latestOrNewSnapshot(h, dataset)
-						if err != nil {
-							return err
+						if err == nil {
+							err = RunReplicateProgress(
+								ReplicatePipeline(h, snap, s.toHost(), dstPath),
+								func(sent, total int64) {
+									// Until the size line lands the total is 0.
+									// Show bytes moved rather than divide by it.
+									fyne.Do(func() {
+										if total > 0 {
+											bar.SetValue(float64(sent) / float64(total))
+											status.SetText(fmt.Sprintf("%s of %s  (%.1f%%)",
+												humanBytes(sent), humanBytes(total),
+												100*float64(sent)/float64(total)))
+										} else {
+											status.SetText(humanBytes(sent) + " sent")
+										}
+									})
+								})
 						}
-						return RunReplicate(ReplicatePipeline(h, snap, s.toHost(), dstPath))
-					})
+						fyne.Do(func() {
+							prog.Hide()
+							if err != nil {
+								dialog.ShowError(err, w)
+							} else {
+								dialog.ShowInformation("replicate", "replicate ✓", w)
+							}
+							refresh()
+						})
+					}()
 				}, w)
 		})
 	})

@@ -566,13 +566,13 @@ func TestMockReplicatePipeline(t *testing.T) {
 	stdMock(t)
 	// Encrypted source with a common snapshot on the target: raw incremental.
 	p := ReplicatePipeline(LocalHost(), "tank/data@b", LocalHost(), "backup/data")
-	want := "zfs send -v -w -i 'tank/data@a' 'tank/data@b' | zfs recv -s -F -o readonly=on -o canmount=noauto 'backup/data'"
+	want := "zfs send -vP -w -i 'tank/data@a' 'tank/data@b' | zfs recv -s -F -o readonly=on -o canmount=noauto 'backup/data'"
 	if p != want {
 		t.Errorf("pipeline =\n  %s\nwant\n  %s", p, want)
 	}
 	// A resume token on the target wins over everything else.
 	p = ReplicatePipeline(LocalHost(), "tank/data@b", LocalHost(), "backup/rez")
-	if !strings.HasPrefix(p, "zfs send -v -t '1-mocktoken-abc'") {
+	if !strings.HasPrefix(p, "zfs send -vP -t '1-mocktoken-abc'") {
 		t.Errorf("resume pipeline wrong: %s", p)
 	}
 	// A remote destination wraps the recv leg in quoted ssh with accept-new.

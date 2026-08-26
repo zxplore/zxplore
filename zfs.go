@@ -10,9 +10,11 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -816,11 +818,106 @@ func RollbackBootEnv(h Host, snap string) error { return zfsAdmin(h, "rollback",
 // RunReplicate executes a send|recv pipeline (from ReplicatePipeline). The local
 // leg needs root to read/write the pool, so the pipe runs under pkexec; any
 // remote leg carries its own ssh (root can still read the user's key file).
+//
+// Kept for callers that genuinely do not want progress. Anything user-facing
+// should use RunReplicateProgress: a replication is the longest operation this
+// tool performs — 789G at ~1.2GB/s is eleven minutes — and CombinedOutput
+// blocks for all of it, so the window sat empty while zfs was printing a
+// progress line every second into a buffer nobody read (reported 2026-08-26).
 func RunReplicate(pipeline string) error {
-	auditLog(LocalHost(), []string{"sh", "-c", pipeline})
-	out, err := localCmd("pkexec", "sh", "-c", pipeline).CombinedOutput()
+	return RunReplicateProgress(pipeline, nil)
+}
+
+// sendSizeRe matches the parseable total: "size\t<bytes>".
+var sendSizeRe = regexp.MustCompile(`^size\s+(\d+)$`)
+
+// sendProgressRe matches a progress tick. zfs prints "HH:MM:SS<TAB>SENT<TAB>SNAP",
+// where SENT is raw bytes under -P and human-readable ("285G") under plain -v.
+// Both shapes are accepted because a resume token path or an older zfs can
+// still produce the human form, and a progress bar that silently stops moving
+// is worse than none.
+var sendProgressRe = regexp.MustCompile(`^\d\d:\d\d:\d\d\s+([0-9.]+[KMGTPE]?)\s+\S`)
+
+// parseSentBytes turns either "1234567" or "285G" into bytes.
+func parseSentBytes(f string) int64 {
+	if f == "" {
+		return 0
+	}
+	mult := int64(1)
+	switch f[len(f)-1] {
+	case 'K':
+		mult = 1 << 10
+	case 'M':
+		mult = 1 << 20
+	case 'G':
+		mult = 1 << 30
+	case 'T':
+		mult = 1 << 40
+	case 'P':
+		mult = 1 << 50
+	case 'E':
+		mult = 1 << 60
+	}
+	if mult > 1 {
+		f = f[:len(f)-1]
+	}
+	v, err := strconv.ParseFloat(f, 64)
 	if err != nil {
-		return fmt.Errorf("replicate: %v: %s", err, strings.TrimSpace(string(out)))
+		return 0
+	}
+	return int64(v * float64(mult))
+}
+
+// RunReplicateProgress runs the pipeline and reports progress as it goes.
+//
+// onProgress is called with (sentBytes, totalBytes) each time zfs emits a tick;
+// totalBytes is 0 until the "size" line arrives, so a caller must handle an
+// unknown total rather than dividing by zero. Pass nil for no reporting.
+//
+// stderr is STREAMED, not collected: that is the whole point. The last few
+// lines are still retained so a failure can report something useful, because
+// an error message is not much help either if it was thrown away in favour of
+// progress.
+func RunReplicateProgress(pipeline string, onProgress func(sent, total int64)) error {
+	auditLog(LocalHost(), []string{"sh", "-c", pipeline})
+	cmd := localCmd("pkexec", "sh", "-c", pipeline)
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("replicate: %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("replicate: %v", err)
+	}
+
+	var total, sent int64
+	var tail []string
+	sc := bufio.NewScanner(stderr)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		line := strings.TrimRight(sc.Text(), "\r")
+		if tail = append(tail, line); len(tail) > 12 {
+			tail = tail[1:]
+		}
+		if m := sendSizeRe.FindStringSubmatch(line); m != nil {
+			if v, e := strconv.ParseInt(m[1], 10, 64); e == nil {
+				total = v
+				if onProgress != nil {
+					onProgress(sent, total)
+				}
+			}
+			continue
+		}
+		if m := sendProgressRe.FindStringSubmatch(line); m != nil {
+			if v := parseSentBytes(m[1]); v > 0 {
+				sent = v
+				if onProgress != nil {
+					onProgress(sent, total)
+				}
+			}
+		}
+	}
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("replicate: %v: %s", err, strings.TrimSpace(strings.Join(tail, "\n")))
 	}
 	return nil
 }
@@ -1205,9 +1302,13 @@ func ReplicatePipeline(srcHost Host, srcSnap string, dstHost Host, dstPath strin
 
 	var send string
 	if tok := singleProp(dstHost, dstPath, "receive_resume_token"); tok != "" && tok != "-" && tok != "?" {
-		send = "zfs send -v -t " + shellQuote(tok)
+		send = "zfs send -vP -t " + shellQuote(tok)
 	} else {
-		send = "zfs send -v "
+		// -P as well as -v: -P makes zfs emit a machine-readable "size\t<bytes>"
+		// line up front, which is the only reliable source for a percentage.
+		// Without it the caller has nothing to divide by and can show a
+		// spinner at best.
+		send = "zfs send -vP "
 		if enc := singleProp(srcHost, srcDs, "encryption"); enc != "" && enc != "off" && enc != "?" {
 			send += "-w " // raw: replicate without ever loading the key
 		}
