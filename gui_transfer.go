@@ -253,10 +253,19 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 					status.SetText("cancelling…")
 					go cancelFn()
 				}
+				// An encrypted source replicates RAW: the stream is never
+				// decrypted, so the destination holds ciphertext it has no key
+				// for. That is a materially different thing from a plain copy
+				// and nothing on screen said so.
+				head := container.NewVBox(
+					widget.NewLabel(fmt.Sprintf("%s  →  %s:%s", snap, dst.host.Label(), dstPath)))
+				if IsRawSend(pipeline) {
+					lock := widget.NewLabel("🔒  encrypted end to end — raw send, key never loaded")
+					lock.TextStyle = fyne.TextStyle{Bold: true}
+					head.Add(lock)
+				}
 				prog := dialog.NewCustomWithoutButtons("Replicating",
-					container.NewVBox(
-						widget.NewLabel(fmt.Sprintf("%s  →  %s:%s", snap, dst.host.Label(), dstPath)),
-						bar, status, rate, btnCancel),
+					container.NewVBox(head, bar, status, rate, btnCancel),
 					w)
 				prog.Show()
 
@@ -266,6 +275,7 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 				// which is what someone watching it actually wants to know.
 				var lastSent int64
 				lastAt := time.Now()
+				startedAt := time.Now()
 
 				go func() {
 					// RunReplicateCancellable — not a raw pkexec — so the pipeline
@@ -291,13 +301,19 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 									// has moved rather than dividing by zero.
 									status.SetText(humanBytes(sent) + " sent")
 								}
+								// Elapsed is shown unconditionally — it is true from the
+								// first tick, where rate and ETA are not, and it is the
+								// number an operator compares against a stopwatch.
+								el := time.Since(startedAt).Round(time.Second)
 								if bps > 0 {
 									eta := ""
 									if total > sent {
 										secs := float64(total-sent) / bps
 										eta = fmt.Sprintf("   ETA %s", (time.Duration(secs) * time.Second).Round(time.Second))
 									}
-									rate.SetText(fmt.Sprintf("%s/s%s", humanBytes(int64(bps)), eta))
+									rate.SetText(fmt.Sprintf("%s/s%s   elapsed %s", humanBytes(int64(bps)), eta, el))
+								} else {
+									rate.SetText(fmt.Sprintf("elapsed %s", el))
 								}
 							})
 						},
@@ -356,7 +372,9 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 							return
 						}
 						dst.reload()
-						dialog.ShowInformation("Replicate", "✓ replicated → "+dst.host.Label()+":"+dstPath, w)
+						dialog.ShowInformation("Replicate",
+							fmt.Sprintf("✓ replicated → %s:%s\n\ntook %s",
+								dst.host.Label(), dstPath, time.Since(startedAt).Round(time.Second)), w)
 					})
 				}()
 			}, w)
