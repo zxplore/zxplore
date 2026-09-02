@@ -173,12 +173,17 @@ manlint:
 		if [ -n "$$out" ]; then echo "$$out"; exit 1; fi
 	@echo "mandoc lint: clean"
 
-check: test race vulncheck manlint
-	@test -z "$(shell gofmt -l .)" || { echo "gofmt drift:"; gofmt -l .; exit 1; }
+# staticcheck as its own target so ci.yml can CALL it rather than re-typing the
+# invocations. Every gate exists exactly once, in the Makefile, with CI as a
+# thin caller — the alternative is drift nobody notices until a red email.
+staticcheck:
 	@command -v staticcheck >/dev/null 2>&1 || { \
 		echo "staticcheck NOT INSTALLED — this check DID NOT RUN"; \
 		echo "  go install honnef.co/go/tools/cmd/staticcheck@latest"; exit 1; }
 	staticcheck ./...
 	staticcheck -tags gui ./...
 
-.PHONY: build bump test race vulncheck manlint check install uninstall clean
+check: test race vulncheck manlint staticcheck
+	@test -z "$(shell gofmt -l .)" || { echo "gofmt drift:"; gofmt -l .; exit 1; }
+
+.PHONY: build bump test race vulncheck manlint staticcheck check install uninstall clean

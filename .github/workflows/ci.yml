@@ -33,19 +33,20 @@ jobs:
         run: test -z "$(gofmt -l .)"
       - name: Vet + test (both flavors)
         run: make test
-      - name: Race detector (both flavors)
-        run: |
-          go test -race ./...
-          go test -race -tags gui ./...
-      - name: staticcheck (both flavors)
+      # Every step CALLS a make target rather than re-typing the command, so
+      # the gate policy lives in exactly one place and `make check` cannot
+      # drift from the server. Kept as separate steps, not one `make check`,
+      # so a failure names the gate in the checks UI.
+      - name: Analysis tools
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@latest
-          staticcheck ./...
-          staticcheck -tags gui ./...
-      - name: govulncheck
-        run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+      - name: Race detector (both flavors)
+        run: make race
+      - name: staticcheck (both flavors)
+        run: make staticcheck
+      - name: govulncheck
+        run: make vulncheck
       - name: Man page lint — mandoc present
         run: command -v mandoc
       - name: Man page lint
@@ -55,14 +56,7 @@ jobs:
         # pages the runner has installed, not of our page. On failure the
         # first offending line is emitted as an ::error annotation so the
         # reason is visible in the checks API, not only in the step log.
-        run: |
-          mandoc -T lint docs/zxplore.1 > /tmp/lint.txt 2>&1 || true
-          out=$(grep -v ' STYLE: ' /tmp/lint.txt || true)
-          if [ -n "$out" ]; then
-            echo "$out"
-            echo "::error::mandoc non-STYLE: $(echo "$out" | head -1)"
-            exit 1
-          fi
+        run: make manlint
       - name: Build both binaries
         run: make build
 
