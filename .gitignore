@@ -31,3 +31,4 @@ assets/*.png
 # ignores them; this keeps the three consoles consistent.
 /CLAUDE.md
 CLAUDE.md.bak.*
+.gotmp/

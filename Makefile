@@ -79,11 +79,22 @@ zxplore-txn: $(wildcard cmd/zxplore-txn/*.go txn/*.go) go.mod go.sum
 # Unit + mock-CLI suites for both build flavors. The mock tests fake
 # zfs/zpool/pkexec/ssh on PATH — no real pool is ever touched. Feature→test
 # map: docs/TESTING.md.
+# GOTMPDIR is pinned inside the tree because a host that mounts /tmp noexec
+# (onyx does) makes `go test` die with
+#     fork/exec /tmp/go-build.../zxplore.test: permission denied
+# when it tries to run the test binary Go just linked there. That reads like a
+# broken test and is not one -- it is the gate failing to run at all, which is
+# the worst failure mode a gate has. vmxplore and wgxplore already pinned this;
+# zxplore did not, so `make check` had never completed on onyx. .gotmp is
+# gitignored.
+GOTMPDIR_DIR := $(CURDIR)/.gotmp
+
 test:
+	@mkdir -p $(GOTMPDIR_DIR)
 	$(GO) vet ./...
 	$(GO) vet -tags gui ./...
-	$(GO) test ./...
-	$(GO) test -tags gui ./...
+	GOTMPDIR=$(GOTMPDIR_DIR) $(GO) test ./...
+	GOTMPDIR=$(GOTMPDIR_DIR) $(GO) test -tags gui ./...
 
 # ── install ──────────────────────────────────────────────────────────────────
 install: build
@@ -131,7 +142,38 @@ clean:
 # staticcheck catches what build/vet/test/gofmt cannot -- unused functions and
 # dead branches. vmxplore's CI failed on exactly that after a clean local run,
 # which is what prompted adding it here too.
-check: test
+# ── the slow half of CI, as targets you can run alone ────────────────────────
+#
+# These three existed only in ci.yml. `check` therefore passed locally and the
+# server still went red -- which is exactly how vmxplore's run 61 was found, on
+# a govulncheck advisory published while the tree sat untouched. The two
+# consoles are meant to be one product, so a gate in one and not the other is
+# how they drift.
+
+race:
+	@mkdir -p $(GOTMPDIR_DIR)
+	GOTMPDIR=$(GOTMPDIR_DIR) $(GO) test -race ./...
+	GOTMPDIR=$(GOTMPDIR_DIR) $(GO) test -race -tags gui ./...
+
+# govulncheck reads the Go vulnerability database, so unlike every other gate
+# here it can go red with the source unchanged: a new advisory against a
+# dependency is enough. Run it before you blame your own diff.
+vulncheck:
+	@command -v govulncheck >/dev/null 2>&1 || { \
+		echo "govulncheck NOT INSTALLED — this check DID NOT RUN"; \
+		echo "  go install golang.org/x/vuln/cmd/govulncheck@latest"; exit 1; }
+	govulncheck ./...
+
+# Mirror CI's filter exactly (fail on WARNING/ERROR, tolerate STYLE), or the
+# page passes here and fails there.
+manlint:
+	@command -v mandoc >/dev/null 2>&1 || { \
+		echo "mandoc NOT INSTALLED — this check DID NOT RUN"; exit 1; }
+	@out=$$(mandoc -T lint docs/zxplore.1 2>&1 | grep -v ' STYLE: ' | grep -v 'outdated mandoc.db' || true); \
+		if [ -n "$$out" ]; then echo "$$out"; exit 1; fi
+	@echo "mandoc lint: clean"
+
+check: test race vulncheck manlint
 	@test -z "$(shell gofmt -l .)" || { echo "gofmt drift:"; gofmt -l .; exit 1; }
 	@command -v staticcheck >/dev/null 2>&1 || { \
 		echo "staticcheck NOT INSTALLED — this check DID NOT RUN"; \
@@ -139,4 +181,4 @@ check: test
 	staticcheck ./...
 	staticcheck -tags gui ./...
 
-.PHONY: build bump test check install uninstall clean
+.PHONY: build bump test race vulncheck manlint check install uninstall clean
