@@ -25,3 +25,9 @@ assets/*.png
 .testtmp/
 /zxplore-api
 /zxplore-txn
+
+# Agent rules live in the claude-brain repo and are laid down locally by its
+# restore.sh. They must never be committed to a public repo — vmxplore already
+# ignores them; this keeps the three consoles consistent.
+/CLAUDE.md
+CLAUDE.md.bak.*

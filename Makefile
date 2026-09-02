@@ -123,4 +123,20 @@ uninstall:
 clean:
 	rm -f zxplore zxplore-tui zxplore-bin zxplore-api zxplore-txn
 
-.PHONY: build bump test install uninstall clean
+# check — everything a push should survive, in the order that fails cheapest
+# first. Mirrors vmxplore's target deliberately: these consoles are one product,
+# and a gate that exists in one repo and not another is how they drift (the same
+# reason ci.yml says so at the top).
+#
+# staticcheck catches what build/vet/test/gofmt cannot -- unused functions and
+# dead branches. vmxplore's CI failed on exactly that after a clean local run,
+# which is what prompted adding it here too.
+check: test
+	@test -z "$(shell gofmt -l .)" || { echo "gofmt drift:"; gofmt -l .; exit 1; }
+	@command -v staticcheck >/dev/null 2>&1 || { \
+		echo "staticcheck NOT INSTALLED — this check DID NOT RUN"; \
+		echo "  go install honnef.co/go/tools/cmd/staticcheck@latest"; exit 1; }
+	staticcheck ./...
+	staticcheck -tags gui ./...
+
+.PHONY: build bump test check install uninstall clean
