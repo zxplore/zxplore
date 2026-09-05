@@ -13,12 +13,17 @@
 .Nm
 .Fl -containers
 .Op Ar command Op Ar name
+.Nm
+.Fl -builder
+.Ar command
+.Op Ar arg ...
 .Sh DESCRIPTION
 .Nm
 is a direct console for OpenZFS: browse datasets and snapshots with a full
-property and permission dossier, take and manage snapshots, restore
-individual files from any snapshot, replicate datasets between machines,
-and manage pools, boot environments, and native encryption.
+property and permission dossier, design and create pools from the disks a
+host has, take and manage snapshots, restore individual files from any
+snapshot, replicate datasets between machines, and manage pools, boot
+environments, native encryption and the container estate.
 .Pp
 Every action maps to a plain
 .Xr zfs 8 ,
@@ -51,7 +56,27 @@ re-executes itself under
 (ZFS administration requires privilege; the terminal keeps the tty).
 .It Fl -version , Fl V
 Print the version and exit.
+.It Fl -builder Ar command Op Ar arg ...
+The pool Builder from a terminal: the disk shelf, candidate layouts, an
+imported pool's vdev tree, a dry run, a create.
+Re-executes under
+.Xr sudo 8
+like
+.Fl -tui .
+Commands and the vdev spec grammar are in
+.Sx THE BUILDER .
+.It Fl -containers Op Ar command Op Ar name
+The container estate from a terminal: list, snapshot, snapshots, rollback,
+replicate.
+Commands are in
+.Sx CONTAINERS .
 .El
+.Pp
+Every subcommand prints a usage line and exits 2 when called with the wrong
+arguments, and prints
+.Dq zxplore: Ar reason
+to standard error and exits 1 when the host refuses \(em see
+.Sx DIAGNOSTICS .
 .Sh THE BROWSER
 The main view lists every dataset and volume with a pinned pool overview
 (health, capacity, fragmentation, scrub state, errors).
@@ -108,6 +133,97 @@ between two snapshots, or between a snapshot and the live filesystem,
 colored by change type
 .Pq modified, added, removed, renamed
 and filterable by path substring.
+.Sh THE BUILDER
+The Builder tab (F2) designs a pool from the disks the host has and shows
+what the design yields before anything is written.
+The shelf lists every whole disk with its kind, size and model; a disk that
+is in use says why
+.Pq Dq mounted at /boot/efi , Dq zfs member of rpool
+and cannot be ticked.
+Ticking disks for data produces the candidate layouts \(em mirrors, RAIDZ1,
+RAIDZ2 and RAIDZ3 split into sane vdev widths, dRAID2 where the disk count
+divides, and a stripe \(em each with its usable and raw capacity, what it
+survives, a badge and the reason.
+Free NVMe or SSD devices next to rotational data are proposed as a mirrored
+log device and a cache.
+.Pp
+The layout shows one row per vdev with the disks as chips; a vdev can be
+dropped, and a custom one added with any kind and role (dRAID data disks
+per group and spares by hand).
+The summary carries the exact
+.Xr zpool-create 8
+line the design becomes \(em built on
+.Pa /dev/disk/by-id
+names with
+.Cm ashift
+and
+.Cm compression
+set explicitly \(em and the warnings an operator would raise: a stripe of
+data, a single log device, a rotational cache, RAIDZ1 across large disks,
+a USB bridge.
+.Dq Dry run
+shows the output of
+.Ql zpool create -n ;
+.Dq Create
+asks for the pool name to be typed and then builds it.
+.Dq See a pool
+draws an imported pool's vdev tree from
+.Ql zpool status -P
+in the same rows, state-coloured.
+.Pp
+Capacity figures are the textbook numbers: parity subtracted, the smallest
+member setting the size.
+RAIDZ additionally loses a few percent to padding, so the numbers are shown
+with \(ap and the dry run is the truth.
+The shelf comes from
+.Xr lsblk 8 ;
+on
+.Fx
+the tab reports that rather than showing an empty shelf.
+.Pp
+The same engine from a terminal:
+.Bl -tag -width "--builder dry-run NAME SPEC"
+.It Nm Fl -builder Cm disks
+The shelf: one line per disk with kind, size, model and whether it is free.
+Pseudo devices (zvols, loop devices) are hidden unless
+.Ev ZXPLORE_BUILDER_ALL_DEVICES
+is set to 1, which is how a lab builds on loop files.
+.It Nm Fl -builder Cm suggest Ar name Ar disk ...
+The candidate layouts for those disks, each with its capacity, what it
+survives, the reason, the create line and any warnings.
+.It Nm Fl -builder Cm topology Ar pool
+An imported pool's vdev tree, indented, with state and error counters.
+.It Nm Fl -builder Cm dry-run Ar name Ar spec ...
+What zpool would build, verbatim from
+.Ql zpool create -n .
+.It Nm Fl -builder Cm create Ar name Ar spec ...
+Build it.
+Warnings go to standard error first; the create line is printed before it
+runs and written to the audit log after.
+.El
+.Pp
+.Ar spec
+is the vdev grammar of
+.Xr zpool-create 8
+with disk names instead of paths: a kind word
+.Pq Cm mirror , raidz1 , raidz2 , raidz3 , draid2 , ...
+starts a vdev, a role word
+.Pq Cm log , cache , spare , special , dedup
+starts a section, and every other word is a disk from the shelf
+.Pq Ql sda , Ql /dev/sda No or its by-id path .
+A bare
+.Cm draid2
+gets an automatic group layout; the explicit form
+.Ql draid2:4d:12c:1s
+is accepted as is.
+.Pp
+Example \(em twelve 20 TB disks, two NVMe, two SSD:
+.Bd -literal -offset indent
+$ zxplore --builder suggest tank sdc sdd sde sdf sdg sdh sdi sdj sdk sdl sdm sdn
+RAIDZ2         RECOMMENDED     usable \(ap 200 TB   raw 240 TB   survives any 2 disk(s)
+  two parity disks per vdev \(em survives a failure during a resilver; the default for large disks
+  zpool create -o ashift=12 -O compression=zstd tank raidz2 /dev/disk/by-id/wwn-... log mirror /dev/disk/by-id/nvme-... cache /dev/disk/by-id/ata-...
+.Ed
 .Sh REMOTE OPERATION
 A saved server is a name, an
 .Ar user@host Ns Op : Ns Ar port ,
@@ -449,32 +565,116 @@ Listing works unprivileged wherever the engine itself does.
 .Nm Fl -tui
 (and the static
 .Nm zxplore-tui
-binary) is a full console, not a fallback: the browser with live dossier
-(F1), the dual-pane transfer commander (F2), the snapshot file explorer
-(F3 or
+binary) is a full console, not a fallback.
+Four views: the browser with live dossier (F1), the dual-pane transfer
+commander (F2), the snapshot file explorer (F3 or
 .Ic x
-on a dataset \(em versions across every snapshot, restore as copy or over
-live), and the pools view (F4) with the full drill-down dossier.
+on a dataset), and the pools view (F4) with the full drill-down dossier.
+The Builder has no terminal view yet; its engine is
+.Fl -builder .
 .Ic \&?
-shows every key;
-.Ic \&:
-opens a command bar
-.Pq Ic :browse , Ic :transfer , Ic :pools , Ic :explore , Ic :connect , Ic :q ;
-.Ic /
-filters the dataset list; movement is arrows or vim keys
-.Pq Ic j k g G , Ic ctrl+d Ns / Ns Ic ctrl+u .
+shows every key inside the app; this is the same list.
+.Pp
+Browser (F1):
+.Bl -tag -width "ctrl+d / ctrl+u" -offset indent -compact
+.It Ic Up , Ic Down , Ic j , Ic k
+move;
+.Ic g Ns / Ns Ic G
+first / last;
+.Ic ctrl+d Ns / Ns Ic ctrl+u
+half page.
+.It Ic /
+filter the dataset list.
+.It Ic Enter
+snapshot menu on the dataset: explore, diff against live or any snapshot,
+clone, bookmark, rollback, destroy.
+.It Ic a
+dataset menu: create child or zvol, rename, mount, encryption
+(load, unload, change key, create encrypted), destroy.
+.It Ic Tab
+edit properties in the right pane: arrows walk the settable properties,
+Enter changes one \(em enum and on/off properties get the same option lists
+the GUI offers, free-form ones a text input;
 .Ic Tab
-moves focus into the right pane as a property editor: arrows walk the
-settable properties, Enter changes one — enum and on/off properties get
-the same option lists the GUI offers as dropdowns, free-form ones a text
-input.
-.Ic a
-opens the dataset menu (create child/zvol, rename, mount, encryption,
-destroy);
-.Ic B
-(or
-.Ic :be )
-manages boot environments — create, roll back, delete.
+or Escape returns.
+.It Ic x
+the file explorer on the dataset.
+.It Ic s
+snapshot now.
+.It Ic b
+bookmark the current location (see
+.Ic c ) .
+.It Ic c
+connect: pick a saved location \(em a host, or a host and dataset \(em and
+re-home the browser there.
+Locations are the ones bookmarked with
+.Ic b ,
+most recent first (see
+.Sx FILES ) .
+.It Ic B
+boot environments: create, roll back, delete (also
+.Ic :be ) .
+.It Ic r
+reload.
+.It Ic q
+quit.
+.El
+.Pp
+Explorer (F3):
+.Bl -tag -width "ctrl+d / ctrl+u" -offset indent -compact
+.It Ic Enter , Ic l
+enter a directory or pick a file;
+.Ic h
+or Backspace goes up.
+.It Ic Tab
+hop between the files pane and the versions pane
+(every snapshot holding the path).
+.It Ic \&[ , Ic \&]
+browse the live tree or inside a snapshot.
+.It Ic r
+restore as a copy;
+.Ic R
+restore OVER live (needs
+.Ic :rw
+and a typed confirmation).
+.It Ic d
+diff the snapshot against live.
+.El
+.Pp
+Pools (F4):
+.Bl -tag -width "ctrl+d / ctrl+u" -offset indent -compact
+.It Ic Enter , Ic d
+drill-down dossier: vitals, zfs-vs-df space, vdevs with error counters,
+iostat, ARC, events.
+.It Ic s Ic S
+start / stop a scrub.
+.It Ic t
+trim.
+.It Ic c
+clear device errors.
+.It Ic i
+scan for importable pools (import with
+.Ic :importpool ) .
+.El
+.Pp
+The command bar
+.Pq Ic \&:
+takes
+.Ic :browse , Ic :transfer , Ic :pools , Ic :explore Op Ar dataset ,
+.Ic :connect Ar user@host:pool , Ic :importpool Ar name , Ic :be ,
+.Ic :ro
+/
+.Ic :rw ,
+.Ic :help
+and
+.Ic :q .
+The verbs the menus offer are commands too \(em
+.Ic :snaps , Ic :clone , Ic :rollback , Ic :hold , Ic :release , Ic :restore ,
+.Ic :scrub , Ic :trim , Ic :loadkey , Ic :unloadkey , Ic :changekey ,
+.Ic :setprop , Ic :bookmark , Ic :refresh
+\(em and
+.Ic :help
+lists them with their arguments.
 .Pp
 The TUI is READ-ONLY BY DEFAULT: every mutation \(em snapshot, restore,
 rollback, replicate, pool maintenance \(em requires
@@ -486,8 +686,9 @@ retyping the target's name.
 Browsing, diffing, and drill-downs never need unlocking.
 .Sh KEY BINDINGS (GUI)
 .Bl -tag -width "PgUp/PgDn, Home/End" -compact
-.It F1 / F2 / F3
-switch Browser / Transfer / Explorer.
+.It F1 / F2 / F3 / F4 / F5
+switch Browser / Builder / Transfer / Explorer / Containers.
+Builder moved into F2 in 1.3.0; Transfer and Explorer are F3 and F4 since.
 .It Tab
 hop between panes (dataset list/snapshots; transfer left/right; explorer
 files/versions).
@@ -507,6 +708,35 @@ dismiss the topmost dialog or window.
 .It Alt+Q
 quit.
 .El
+.Sh ENVIRONMENT
+.Bl -tag -width "ZXPLORE_BUILDER_ALL_DEVICES" -compact
+.It Ev XDG_CONFIG_HOME
+where
+.Pa zxplore/servers.json , zxplore/keys/
+and
+.Pa zxplore/favorites.json
+live; defaults to
+.Pa ~/.config .
+.It Ev HOME
+the audit log's home
+.Pq Pa ~/.local/state/zxplore/audit.log
+and the default for
+.Ev XDG_CONFIG_HOME .
+.It Ev USER
+the user offered when a saved server has none.
+.It Ev PATH
+searched for the
+.Xr zfs 8
+and
+.Xr zpool 8
+binaries, the container engine, and the kldload k-commands whose presence
+lights up the kldload extras.
+.It Ev ZXPLORE_BUILDER_ALL_DEVICES
+when set to 1, the Builder's shelf includes pseudo block devices \(em zvols,
+loop devices, ramdisks, device-mapper and md \(em that are normally hidden
+because nothing real is ever built on them.
+For labs and tests.
+.El
 .Sh FILES
 .Bl -tag -width Ds
 .It Pa ~/.local/state/zxplore/audit.log
@@ -518,6 +748,12 @@ saved servers.
 Contains no passwords \(em key paths only.
 .It Pa ~/.config/zxplore/keys/
 private keys generated or pasted in the app, mode 0600.
+.It Pa ~/.config/zxplore/favorites.json
+saved locations for the terminal UI's
+.Ic c
+connect menu: a name, an optional
+.Ar user@host
+and a dataset path, most recent first.
 .It Pa MOUNTPOINT/.zfs/snapshot
 the per-dataset snapshot directory the explorer reads.
 Works whether the
@@ -582,22 +818,154 @@ another machine:
 zxplore --containers snapshot move
 zxplore --containers replicate   # prints the send command
 .Ed
+.Pp
+Print the version:
+.Pp
+.Dl $ zxplore --version
+.Pp
+The disk shelf of the box you are on:
+.Bd -literal -offset indent
+$ zxplore --builder disks
+nvme0n1      nvme       2.0 TB  Samsung SSD 980 PRO 2TB      in use: mounted at /boot/efi, zfs member of rpool
+sda          hdd         20 TB  WDC WD201KFGX                free
+sdb          hdd         20 TB  WDC WD201KFGX                free
+.Ed
+.Pp
+What eight new disks could be, with the create line for each answer:
+.Bd -literal -offset indent
+$ zxplore --builder suggest tank sda sdb sdc sdd sde sdf sdg sdh
+RAIDZ2         RECOMMENDED     usable \(ap 120 TB   raw 160 TB   survives any 2 disk(s)
+  two parity disks per vdev \(em survives a failure during a resilver; the default for large disks
+  zpool create -o ashift=12 -O compression=zstd tank raidz2 /dev/disk/by-id/wwn-... ...
+dRAID2         FAST RESILVER   usable \(ap 93 TB    raw 160 TB   survives any 2 disk(s)
+  ...
+.Ed
+.Pp
+Ask zpool what it would build, then build it:
+.Bd -literal -offset indent
+$ zxplore --builder dry-run tank raidz2 sda sdb sdc sdd sde sdf log mirror nvme1n1 nvme2n1 spare sdg
+would create 'tank' with the following layout:
+
+	tank
+	  raidz2
+	    wwn-0x5000cca2a1
+	    ...
+$ zxplore --builder create tank raidz2 sda sdb sdc sdd sde sdf log mirror nvme1n1 nvme2n1 spare sdg
+zpool create -o ashift=12 -O compression=zstd tank raidz2 /dev/disk/by-id/wwn-... log mirror ... spare ...
+pool tank created
+.Ed
+.Pp
+The vdev tree of a pool that exists, error counters included:
+.Bd -literal -offset indent
+$ zxplore --builder topology tank
+tank                                     ONLINE  r/w/c 0/0/0
+  raidz2-0                                 ONLINE  r/w/c 0/0/0
+    /dev/disk/by-id/wwn-0x5000cca2a1         ONLINE  r/w/c 0/0/0
+  spares
+    /dev/disk/by-id/wwn-0x5000cca2a7         AVAIL
+.Ed
+.Pp
+A lab: build a pool on four loop files, without touching a real disk:
+.Bd -literal -offset indent
+# for i in 0 1 2 3; do truncate -s 1G /var/tmp/d$i.img; losetup -f /var/tmp/d$i.img; done
+# ZXPLORE_BUILDER_ALL_DEVICES=1 zxplore --builder create lab raidz1 loop0 loop1 loop2 spare loop3
+.Ed
+.Pp
+What is running, and whether its layers are datasets:
+.Pp
+.Dl $ zxplore --containers list
+.Sh DIAGNOSTICS
+Every failure names the command that failed and repeats what
+.Xr zfs 8
+or
+.Xr zpool 8
+said, verbatim; nothing is paraphrased.
+.Bl -tag -width Ds
+.It Dq zxplore: no such disk on the shelf: Ar name
+A
+.Fl -builder
+spec named a disk that
+.Fl -builder Cm disks
+does not list.
+Pseudo devices need
+.Ev ZXPLORE_BUILDER_ALL_DEVICES .
+.It Dq zxplore: Ar disk No is in use ( Ar reason )
+The design touches a disk that carries a filesystem, a partition or a pool
+member.
+The Builder never offers it; wipe it first if you mean it.
+.It Dq lsblk: ... ( Fx No hosts have no lsblk ... )
+The Builder shelf is Linux-only for now.
+.It Dq Running in chroot, modules won't be signed
+Not from
+.Nm
+\(em quoted here because operators grep for it: it is what dkms says on a
+host whose framework configuration lacks
+.Ql try_sign_modules=true .
+.It Dq zpool create -n ... : Ar text
+The dry run is zpool refusing the design; its text is the reason
+.Pq a busy device, a label it will not overwrite, an ashift it will not honour .
+.It Dq permission denied
+locally, the command is retried under
+.Xr pkexec 1 ;
+remotely it means the delegated user lacks a
+.Xr zfs-allow 8
+permission, which the message names.
+.El
+.Pp
+In the GUI the same text appears in a dialog; in both surfaces every
+executed mutation is in the audit log (see
+.Sx FILES )
+whether it succeeded or not.
 .Sh SEE ALSO
+.Xr pkexec 1 ,
 .Xr ssh 1 ,
 .Xr ssh-copy-id 1 ,
 .Xr ssh-keygen 1 ,
 .Xr ssh_config 5 ,
+.Xr lsblk 8 ,
 .Xr zfs 8 ,
 .Xr zfs-allow 8 ,
-.Xr zpool 8
+.Xr zpool 8 ,
+.Xr zpool-create 8 ,
+.Xr zpool-status 8
 .Sh HISTORY
 .Nm
 targets OpenZFS on Linux and
 .Fx
-from one codebase, shelling out to the
-portable
+from one codebase, shelling out to the portable
 .Ql zfs/zpool
 CLI rather than binding libzfs \(em which is what keeps it remote-capable
 and portable.
+.Pp
+.Nm 1.0.0 \(em 2026-07-28 .
+Version 1.1.0 \(em 2026-07-31.
+Version 1.2.0 \(em 2026-08-19.
+Version 1.3.0 \(em unreleased.
+The Containers tab arrived in 1.2.0, the Builder in 1.3.0.
 .Sh AUTHORS
 .An Anthony Aq Mt admin@zxplore.dev
+.Sh CAVEATS
+The Builder's capacity figures are the textbook ones: parity subtracted and
+the smallest member setting the size.
+RAIDZ pads a few percent on top of that, and a pool with dedup or many small
+files stores less again; the dry run and
+.Ql zpool list
+after the fact are the truth.
+.Pp
+The Builder shelf reads
+.Xr lsblk 8 ,
+so on
+.Fx
+the tab and
+.Fl -builder Cm disks
+report the gap rather than showing an empty shelf; the spec form still
+works there when the disks are named in full.
+The Builder has no terminal-UI view yet.
+.Pp
+The Containers tab and
+.Fl -containers
+need an engine on the ZFS storage driver; on any other driver the layers
+are files and the estate verbs do not apply.
+.Pp
+The GUI needs a display; the static build starts the terminal UI when asked
+for the GUI and says so.
