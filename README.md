@@ -43,9 +43,10 @@ before it runs, written to an audit log after. Click it or type it; same
 primitives either way.
 
 `zxplore` is a keyboard-driven console for an existing OpenZFS install.
-Four tabs — **Browser** (F1), **Transfer** (F2), **Explorer** (F3),
-**Containers** (F4) — over one engine: browse datasets with a full properties
-+ permissions dossier, snapshot datasets, restore any file from any snapshot,
+Five tabs — **Browser** (F1), **Builder** (F2), **Transfer** (F3),
+**Explorer** (F4), **Containers** (F5) — over one engine: browse datasets
+with a full properties + permissions dossier, design and create a pool from
+the disks the box has, snapshot datasets, restore any file from any snapshot,
 diff two points in time, replicate to another pool or host over SSH, and see
 the container estate as the storage it actually is.
 
@@ -159,6 +160,49 @@ invisible to `ps`, absent from every log including zxplore's own audit log.
 A saved server is a name, a host, and a key. The far side needs **nothing but
 OpenZFS and sshd** — no agent, no daemon, no install. Browse it, snapshot it,
 replicate *between two remote machines* from your laptop.
+
+## Builder — design a pool before you build it
+
+The day a box gets new disks, the question is not "how do I type `zpool
+create`" but "what should these disks *be*". The Builder answers that on
+screen before anything is written:
+
+- **The shelf**: every whole disk the host has — kind (NVMe / SSD / HDD /
+  USB), size, model — with in-use disks marked and why (`mounted at /boot/efi`,
+  `zfs member of rpool`), so the system disk is never on offer.
+- **Candidates**: tick the disks for data and the tab proposes the layouts
+  they could be — mirrors, RAIDZ1/2/3 (split into sane vdev widths), dRAID2
+  where the count divides, stripe — each with **usable ≈ / raw / what it
+  survives**, a badge (RECOMMENDED, HIGH IOPS, LOW REDUNDANCY, …) and the
+  one-line reason. Free NVMe/SSD next to rotational data become a mirrored
+  SLOG and a cache proposal.
+- **The layout**: one row per vdev, disks as chips, role sections in zpool
+  order. Drop a vdev, or add a custom one (any kind, any role, dRAID groups
+  and spares by hand).
+- **The summary** and the **exact `zpool create` line** — built on
+  `/dev/disk/by-id` names, `ashift` and `compression` set explicitly — plus
+  the warnings an operator would say out loud: a stripe, a lone SLOG, a
+  rotational cache, RAIDZ1 across 20 TB disks, a USB bridge.
+- **Dry run** shows `zpool create -n`'s own opinion; **Create** asks you to
+  type the pool's name and then builds it.
+- **See a pool**: pick an imported pool and its vdev tree is drawn in the
+  same rows, state-coloured — a design and a running pool read the same way.
+
+The same engine from a shell, for the box you reach over ssh:
+
+```
+zxplore --builder disks                        # the shelf
+zxplore --builder suggest tank sda sdb sdc sdd # candidates, each with its create line
+zxplore --builder dry-run tank raidz2 sda sdb sdc sdd log mirror nvme0n1 nvme1n1
+zxplore --builder create  tank raidz2 sda sdb sdc sdd spare sde
+zxplore --builder topology tank                # an imported pool's vdev tree
+```
+
+The spec is zpool's own vdev grammar with disk names. Capacity figures are
+the textbook numbers (parity subtracted, smallest member sets the size);
+RAIDZ pads a few percent on top, which is why the dry run is the truth.
+The shelf comes from `lsblk`, so it is Linux-only for now; the tab says so
+on FreeBSD rather than showing an empty shelf.
 
 ## Explorer — files across snapshots
 
@@ -332,6 +376,12 @@ zxplore --containers snapshot <name>   # snapshot the whole container root
 zxplore --containers snapshots         # what estate snapshots exist
 zxplore --containers rollback <name>   # put the estate back
 zxplore --containers replicate         # send the estate to another box
+
+zxplore --builder disks                # the disk shelf, free or in use
+zxplore --builder suggest NAME DISK…   # candidate pool layouts + create lines
+zxplore --builder dry-run NAME SPEC…   # zpool create -n
+zxplore --builder create NAME SPEC…    # build the pool
+zxplore --builder topology POOL        # an imported pool's vdev tree
 ```
 
 The TUI is a full console, not a fallback — browser, transfer, the snapshot
@@ -339,7 +389,7 @@ file explorer, and pool drill-downs, with a `:` command bar, `/` filter,
 vim keys, and a `?` key overlay. It is **read-only by default**: mutations
 need `:rw` first, and destroys demand retyping the target's name.
 
-**Keys:** `F1`/`F2`/`F3`/`F4` switch Browser / Transfer / Explorer /
+**Keys:** `F1`–`F5` switch Browser / Builder / Transfer / Explorer /
 Containers · `?` opens the manual · `Tab` hop between panes · `↑↓` `PgUp`/`PgDn` `Home`/`End` move ·
 `Ctrl+F` (or `/`) find · **right-click a dataset** for the full lifecycle
 menu · `Enter` or click a snapshot for actions · `Esc` dismiss · `Alt+Q` quit.

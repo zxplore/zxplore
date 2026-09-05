@@ -50,7 +50,7 @@ const (
 
 // helpHints is the tmux-style status line along the bottom. Keep it TRUE — only
 // keys/gestures that actually work, so it stays a contract, not decoration.
-const helpHints = "  F1 browser   F2 transfer   F3 explorer   ? manual    ↑↓ move   Tab pane   PgUp/PgDn page   Ctrl+F or / find   Enter/right-click = actions   Alt+Q quit  "
+const helpHints = "  F1 browser   F2 builder   F3 transfer   F4 explorer   ? manual    ↑↓ move   Tab pane   PgUp/PgDn page   Ctrl+F or / find   Enter/right-click = actions   Alt+Q quit  "
 
 // navPage is how many rows PgUp/PgDn jump.
 const navPage = 12
@@ -453,7 +453,7 @@ func (l *navList) TypedKey(e *fyne.KeyEvent) {
 		if l.onFind != nil {
 			l.onFind()
 		}
-	case fyne.KeyF1, fyne.KeyF2, fyne.KeyF3, fyne.KeyF4:
+	case fyne.KeyF1, fyne.KeyF2, fyne.KeyF3, fyne.KeyF4, fyne.KeyF5:
 		if l.onFunc != nil {
 			l.onFunc(e.Name)
 		}
@@ -1147,9 +1147,12 @@ func runGUI() {
 	split := container.NewHSplit(card(leftPane), rightPane)
 	split.SetOffset(0.25) // narrow list, wide dossier (Transfer stays 50/50)
 
-	// ── tabs: hand-built colored bar — Browser blue · Transfer purple ·
-	// Explorer green, with real air between the buttons (AppTabs can do
-	// neither). F1/F2/F3 and clicks both land in tabSel.
+	// ── tabs: hand-built colored bar — Browser blue · Builder cyan ·
+	// Transfer purple · Explorer green · Containers gold, with real air
+	// between the buttons (AppTabs can do neither). F1–F5 and clicks both
+	// land in tabSel. Builder sits second on purpose: build the pool, then
+	// browse what you built — and it moved Transfer/Explorer to F3/F4 in
+	// 1.3.0 (documented in the changelog and the manual).
 	// Probed once, above switchTab because the key handler needs to know
 	// whether a fourth page exists before the pages are built.
 	hasContainers := HasContainerEngine()
@@ -1167,10 +1170,12 @@ func runGUI() {
 		case fyne.KeyF3:
 			tabSel(2)
 		case fyne.KeyF4:
-			// Guarded: without an engine there is no fourth page, and
+			tabSel(3)
+		case fyne.KeyF5:
+			// Guarded: without an engine there is no fifth page, and
 			// selecting one would hide every tab and show nothing.
 			if hasContainers {
-				tabSel(3)
+				tabSel(4)
 			}
 		}
 	}
@@ -1188,7 +1193,8 @@ func runGUI() {
 			heading("EXPLORER — files across every snapshot", acGreen),
 			container.NewHBox(widget.NewLabel("zpool:"), explorerSel)),
 		nil, nil, nil, explorerBody)
-	pages := []fyne.CanvasObject{split, transferTab(w, switchTab), explorerPage}
+	builderPage, builderFocus := builderTab(w, switchTab, reload)
+	pages := []fyne.CanvasObject{split, builderPage, transferTab(w, switchTab), explorerPage}
 
 	// Containers, only where there is an engine to manage.
 	//
@@ -1214,11 +1220,12 @@ func runGUI() {
 	}
 	barItems := []fyne.CanvasObject{
 		mkTab(0, "⌂  Browser", acBlue), tabGap(),
-		mkTab(1, "⇄  Transfer", acPurple), tabGap(),
-		mkTab(2, "🗁  Explorer", acGreen),
+		mkTab(1, "⚒  Builder", acCyan), tabGap(),
+		mkTab(2, "⇄  Transfer", acPurple), tabGap(),
+		mkTab(3, "🗁  Explorer", acGreen),
 	}
 	if hasContainers {
-		barItems = append(barItems, tabGap(), mkTab(3, "▣  Containers", acGold))
+		barItems = append(barItems, tabGap(), mkTab(4, "▣  Containers", acGold))
 	}
 	tabBar := container.NewHBox(barItems...)
 	tabSel = func(i int) {
@@ -1240,7 +1247,9 @@ func runGUI() {
 		switch i {
 		case 0:
 			w.Canvas().Focus(list)
-		case 2:
+		case 1:
+			w.Canvas().Focus(builderFocus)
+		case 3:
 			if explorerFocus != nil {
 				w.Canvas().Focus(explorerFocus)
 			}
@@ -1259,7 +1268,7 @@ func runGUI() {
 			explorerSel.Selected = dataset // no OnChanged retrigger — view already mounted
 			explorerSel.Refresh()
 		}
-		tabSel(2)
+		tabSel(3)
 	}
 
 	// ── bottom: tmux-style teal help bar ──

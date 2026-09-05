@@ -4,6 +4,27 @@ All notable changes to zxplore. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] — unreleased
+
+### Added
+- **Builder (F2)** — design a pool from the disks the box has, and see what
+  it yields before anything is written. The shelf marks in-use disks and
+  why; ticking disks for data proposes mirrors, RAIDZ1/2/3 in sane vdev
+  widths, dRAID2 and a stripe, each with usable / raw / what-it-survives, a
+  badge and the reason; free NVMe/SSD become SLOG and cache proposals. The
+  layout is editable vdev by vdev, the exact `zpool create` line is shown
+  (by-id names, explicit ashift and compression) with the warnings an
+  operator would raise, then **Dry run** (`zpool create -n`) and **Create**
+  (typed confirmation). **See a pool** draws an imported pool's vdev tree in
+  the same rows.
+- Builder from a terminal: `zxplore --builder {disks,suggest,topology,dry-run,create}`,
+  with zpool's own vdev grammar and disk names as the spec.
+
+### Changed
+- **Tab order and keys.** Builder is F2; Transfer moved to F3, Explorer to
+  F4, Containers to F5. The Builder sits second on purpose — build the pool,
+  then browse what you built. The manual and the in-app hints say so.
+
 ## [1.2.0] — 2026-08-19
 
 ### Added
