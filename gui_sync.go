@@ -164,7 +164,7 @@ func syncTab(w fyne.Window) fyne.CanvasObject {
 	// what actually identifies the machine.
 	jobFor := func(sv Server, jobs []SyncJob) *SyncJob {
 		for i := range jobs {
-			if jobs[i].Host == sv.Host {
+			if jobs[i].hostAddr() == sv.Host {
 				return &jobs[i]
 			}
 		}
@@ -313,4 +313,21 @@ func syncTab(w fyne.Window) fyne.CanvasObject {
 			"Timers are systemd units; on a host without systemd zxplore prints the crontab line instead.",
 		fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
 	return container.NewBorder(top, foot, nil, nil, container.NewVScroll(list))
+}
+
+// hostAddr is the address this job actually connects to, after any legacy
+// name resolution. Matching a job to a client uses it rather than the raw
+// field, or a job written before jobs carried their own connection shows as
+// orphaned beside a client that reads NOT BACKED UP — both wrong, same host.
+func (j SyncJob) hostAddr() string { return j.server().Host }
+
+// runSyncJobNow is the GUI's entry point. Same code as the timer runs — there
+// is exactly one implementation, so "Run now" and 03:00 cannot behave
+// differently.
+func runSyncJobNow(j SyncJob) (string, error) {
+	out, rc := runSyncJob(j)
+	if rc != 0 {
+		return out, fmt.Errorf("job %s failed (exit %d)", j.Name, rc)
+	}
+	return out, nil
 }

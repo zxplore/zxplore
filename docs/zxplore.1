@@ -21,6 +21,12 @@
 .Fl -observe
 .Op Ar pool
 .Op Ar command Op Ar arg
+.Nm
+.Fl -sync
+.Op Ar command Op Ar job
+.Nm
+.Fl -sync-run
+.Ar job
 .Sh DESCRIPTION
 .Nm
 is a direct console for OpenZFS: browse datasets and snapshots with a full
@@ -80,6 +86,21 @@ pool when none is named.
 Not elevated: the kstats are world-readable.
 Commands are in
 .Sx OBSERVE .
+.It Fl -sync Op Ar command Op Ar job
+Scheduled replication.
+With no command, lists each job and whether its timer is actually enabled.
+Commands are
+.Cm list ,
+.Cm show ,
+.Cm install
+and
+.Cm remove ;
+see
+.Sx AUTO SYNC .
+Requires root, and a kldload host for the graphical tab.
+.It Fl -sync-run Ar job
+Run one job now: probe both ends, pull, then verify the result.
+This is what a timer executes; you rarely type it.
 .El
 .Pp
 Every subcommand prints a usage line and exits 2 when called with the wrong
@@ -525,6 +546,89 @@ are driven by plain
 against the boot dataset DERIVED from the pool's
 .Ql bootfs
 property \(em correct regardless of what the environment is named.
+.Sh AUTO SYNC
+Scheduled replication for an estate.
+A job
+.Em pulls :
+this host fetches from the source, so a compromised source holds no
+credentials here and cannot reach the archive.
+.Pp
+The schedule is a systemd timer, not
+.Nm
+itself \(em a backup that runs only while a window is open is not a backup.
+On a host without systemd the crontab line is printed instead of a unit being
+silently not installed.
+.Pp
+The timer runs
+.Nm
+.Fl -sync-run ,
+not a stored
+.Xr syncoid 8
+command line.
+Whether a send must be raw depends on probing both ends, and a probe made when
+the job was created can fail and record the wrong answer permanently.
+.Bl -tag -width Ds
+.It Nm Fl -sync Cm list
+Every job, its schedule, whether its timer is enabled, when it next runs, and
+the newest snapshot that has actually arrived.
+The last of those is the one that matters: a timer that stopped months ago
+looks identical to a working one until you ask what landed.
+.Bd -literal -offset indent
+$ zxplore --sync list
+fiend-nightly        fiend:rpool -> rpool/backup/fiend
+  enabled            zxplore-sync-fiend-nightly.timer   schedule *-*-* 03:00:00
+  next               Wed 2026-09-09 03:00:00 PDT
+  newest here        rpool/backup/fiend/kldload/state@autosnap_2026-09-08_22:39:02_daily
+.Ed
+.It Nm Fl -sync Cm show Ar job
+The exact command the job runs, and any encryption warning.
+One
+.Xr syncoid 8
+run has one send mode, so a subtree whose datasets differ in encryption
+cannot be carried by a single job.
+.Bd -literal -offset indent
+$ zxplore --sync show fiend-nightly
+command: timeout 4h /usr/local/bin/syncoid --no-sync-snap --create-bookmark \e
+  --recursive --skip-parent --sshkey /root/.ssh/id_ed25519 \e
+  --exclude=containers/storage --recvoptions=u o readonly=on \e
+  root@10.100.10.146:rpool rpool/backup/fiend
+mixed encryption \(em these need their own job: rpool/kldload/secrets
+.Ed
+.It Nm Fl -sync Cm install Ar job
+Write the unit and timer, enable them, and verify the enablement symlink
+landed.
+Installing and enabling are one operation: a unit that exists and is not
+enabled fails silently and surfaces weeks later as an empty archive.
+.Bd -literal -offset indent
+$ zxplore --sync install fiend-nightly
+zxplore-sync-fiend-nightly.timer installed and enabled \(em schedule *-*-* 03:00:00
+.Ed
+.It Nm Fl -sync Cm remove Ar job
+Stop and delete the job's units.
+Removing units that are already gone is not an error.
+.It Nm Fl -sync-run Ar job
+Run the job now and judge it by what arrived.
+.Bd -literal -offset indent
+$ zxplore --sync-run fiend-nightly
+WARNING: 1 dataset(s) under rpool differ in encryption from its root \&...
+running: timeout 4h /usr/local/bin/syncoid --no-sync-snap \&...
+OK: autosnap_2026-09-08_22:39:02_daily present, 77/77 datasets under rpool/backup/fiend.
+.Ed
+.El
+.Ss Verification
+A count is not a result, but the absence of one is.
+The run records the newest snapshot on the source before starting, then
+requires both that this snapshot is present here afterwards and that the
+dataset count matches what the source offered.
+.Xr syncoid 8
+has exited 0 after being killed, and exited 2 having skipped four datasets
+while the checked snapshot still arrived.
+.Ss Bookmarks
+Each pull leaves a bookmark on the source.
+An incremental needs a snapshot common to both ends; if the source's retention
+prunes everything the archive holds, the next run reseeds the whole pool.
+A bookmark costs nothing, survives pruning, and still works as an incremental
+origin.
 .Sh OBSERVE
 The Observe tab (F5) is the debugger: one second of a pool, read for you.
 A sample is two reads of the kernel's ZFS kstats
@@ -827,6 +931,19 @@ Passphrases never appear (they are not argv).
 .It Pa ~/.config/zxplore/servers.json
 saved servers.
 Contains no passwords \(em key paths only.
+.It Pa /etc/zxplore/clients.json
+nodes this host backs up.
+System-wide and mode 0644, not per-user: a job runs from a root timer, so root
+must be able to read the inventory, and a root-only file shows an empty tab
+beside a running timer.
+Contains no passwords \(em key paths only.
+.It Pa /etc/zxplore/syncjobs.json
+Auto Sync jobs, system-wide and mode 0644, for the same reason.
+.It Pa /etc/systemd/system/zxplore-sync- Ns Ar job Ns Pa .service , Pa .timer
+the generated unit and timer for one job.
+Written by
+.Nm ;
+edit the job, not these files.
 .It Pa ~/.config/zxplore/keys/
 private keys generated or pasted in the app, mode 0600.
 .It Pa ~/.config/zxplore/favorites.json

@@ -67,7 +67,26 @@ type SyncJob struct {
 }
 
 // server is the connection this job pulls from.
+//
+// A job written before jobs carried their own connection has only Server, a
+// name. Rather than fail, resolve that name against the inventories — clients
+// first, since a backup job's source is a client. Without this, upgrading
+// silently broke an installed timer: the job loaded, the tab drew it as
+// orphaned, and the 03:00 run died with "has no host" where nobody was
+// watching (2026-09-08).
 func (j SyncJob) server() Server {
+	if j.Host == "" && j.Server != "" {
+		for _, s := range LoadClients() {
+			if s.Name == j.Server {
+				return s
+			}
+		}
+		for _, s := range LoadServers() {
+			if s.Name == j.Server {
+				return s
+			}
+		}
+	}
 	name := j.Server
 	if name == "" {
 		name = j.Host
@@ -292,9 +311,10 @@ func renderService(j SyncJob, s Server) string {
 # command line: whether the send must be raw depends on probing BOTH ends, and
 # a probe run at install time can fail and bake the wrong answer into this file
 # permanently. Deciding at run time also lets the wrapper verify the OUTCOME
-# instead of trusting syncoid's exit code, which lied on 2026-09-08. The ExecStart is wrapped in timeout(1) because a wedged
-# zfs receive hangs forever instead of failing, and an unbounded hang blocks
-# every later run.
+# instead of trusting syncoid's exit code, which lied on 2026-09-08.
+#
+# The timeout lives inside that wrapper, not here: a wedged zfs receive hangs
+# forever instead of failing, and an unbounded hang blocks every later run.
 [Unit]
 Description=zxplore Auto Sync — %s
 After=network-online.target zfs.target
@@ -366,17 +386,6 @@ func syncRunCLI(args []string) int {
 	return 2
 }
 
-// runSyncJobNow is the GUI's entry point. Same code as the timer runs — there
-// is exactly one implementation, so "Run now" and 03:00 cannot behave
-// differently.
-func runSyncJobNow(j SyncJob) (string, error) {
-	out, rc := runSyncJob(j)
-	if rc != 0 {
-		return out, fmt.Errorf("job %s failed (exit %d)", j.Name, rc)
-	}
-	return out, nil
-}
-
 // runSyncJob does the whole pull and judges it by what landed.
 //
 // Returns the operator-readable transcript and an exit code:
@@ -387,21 +396,33 @@ func runSyncJob(j SyncJob) (string, int) {
 	var b strings.Builder
 	say := func(f string, a ...any) { fmt.Fprintf(&b, f, a...) }
 
-	if strings.TrimSpace(j.Host) == "" {
-		say("job %s has no host\n", j.Name)
+	// Resolve FIRST: a legacy job carries only a server name, and testing the
+	// raw field here is what made an installed timer fail at 03:00.
+	srv := j.server()
+	if strings.TrimSpace(srv.Host) == "" {
+		say("job %s has no host, and %q is in neither inventory\n", j.Name, j.Server)
 		return b.String(), 2
 	}
 	if syncoidPath() == "" {
 		say("syncoid not found on PATH or the usual prefixes\n")
 		return b.String(), 2
 	}
-	srv := j.server()
 
 	// What must be here when this finishes, recorded BEFORE, so the check
 	// afterwards is against a specific thing rather than a vague "it worked".
+	// Reachability FIRST, so an unreachable host does not get reported as a
+	// host with no snapshots. Those need opposite responses — power the box on
+	// versus configure sanoid — and conflating them sends the operator to the
+	// wrong place. fiend was simply switched off when this was found
+	// (2026-09-08).
+	if out, err := run(srv.toHost().command("true")); err != nil {
+		say("cannot reach %s: %s\n", srv.sshTarget(), strings.TrimSpace(firstLine(out+err.Error())))
+		return b.String(), 2
+	}
 	newest := newestSnapshot(srv.toHost(), j.Source)
 	if newest == "" {
-		say("no snapshots under %s:%s — is sanoid running there?\n", srv.sshTarget(), j.Source)
+		say("%s is reachable but has no snapshots under %s — is sanoid running there, "+
+			"and does its config cover that dataset?\n", srv.sshTarget(), j.Source)
 		return b.String(), 2
 	}
 	if odd := MixedEncryption(srv.toHost(), j.Source); len(odd) > 0 {
@@ -693,4 +714,12 @@ func datasetCount(h Host, root, exclude string) int {
 		n++
 	}
 	return n
+}
+
+// firstLine keeps a multi-line ssh complaint to the part that names the cause.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }

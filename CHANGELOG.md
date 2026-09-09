@@ -7,6 +7,34 @@ All notable changes to zxplore. Format follows
 ## [1.3.0] — unreleased
 
 ### Added
+- **Auto Sync (F7, kldload only)** — scheduled replication, and whether it is
+  actually running. A job *pulls*: the backup host fetches from the source, so
+  a compromised source holds no credentials on the archive. Each row answers
+  the three questions a timer cannot answer by existing — is it scheduled,
+  when does it run next, and what is the newest snapshot that actually
+  arrived. Clients and servers are two inventories: a **client** is a node
+  this host backs up, a **server** is a box it syncs against. The saved-session
+  manager is parameterised over the two rather than forked, so the key-first
+  auth flow exists once. Terminal equivalent: `zxplore --sync
+  {list,show,install,remove}` and `--sync-run JOB`.
+- **Restore mode** in Transfer (F3) — the same transfer pointed the other way,
+  to revive a host from its archive. `send -p` so mountpoints come back and
+  `recv -x readonly` so the restored root is writable; a root filesystem that
+  is readonly does not boot. The archive it restores *from* is never modified.
+  Off by default: a backup must land readonly so nothing can write to it and
+  diverge from the source.
+
+### Fixed
+- Raw send is decided from a measured matrix instead of a single probe. `zfs
+  send -w` on an *unencrypted* source is `-Lec`, and its embedded-data feature
+  is refused by an encrypted receive — exactly the unencrypted-source into
+  encrypted-archive case. It does not fail cleanly either: the receive dies
+  while the sender's `pv` waits on stdin, so it presents as an indefinite
+  hang. The old code also skipped `-w` when the encryption probe returned its
+  *error* value, sending plaintext to the archive in the one case raw sending
+  exists to prevent. Now: raw unless the source is positively unencrypted and
+  the target inherits encryption, with the target's nearest existing ancestor
+  probed because the target does not exist on a first run.
 - **Builder (F2)** — design a pool from the disks the box has, and see what
   it yields before anything is written. The shelf marks in-use disks and
   why; ticking disks for data proposes mirrors, RAIDZ1/2/3 in sane vdev
