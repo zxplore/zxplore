@@ -523,6 +523,21 @@ func runSyncJob(j SyncJob) (string, int) {
 		recordSyncRun(j, 1, "partial replica")
 		return b.String(), 1
 	}
+	// Capture what the ARCHIVE CANNOT: a pool replica is the data and nothing
+	// else, so a restore has to rediscover the boot environment, the kernel,
+	// the ESP UUID and the hostid. Doing that by hand once is fine; doing it
+	// during a recovery is not, and doing it for twenty nodes is impossible.
+	// Captured on every successful run so the vitals are as current as the
+	// data they describe.
+	//
+	// Guarded on the tool existing: this is a kldload capability, and zxplore
+	// runs anywhere OpenZFS does. Its absence is reported, never silent.
+	if out, err := captureBootManifest(j); err != nil {
+		say("WARNING: replica is good but its boot manifest was NOT captured: %v\n", err)
+	} else if out != "" {
+		say("%s", out)
+	}
+
 	say("OK: %s present, %d/%d datasets under %s.\n", tail, dstN, srcN, j.Target)
 	recordSyncRun(j, 0, fmt.Sprintf("%d/%d datasets", dstN, srcN))
 	return b.String(), 0
@@ -818,4 +833,74 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// manifestDir is where a job's boot manifest and ESP archive live, beside the
+// other things a rebuild needs rather than inside the replica (which is
+// readonly, and whose contents are the client's, not ours).
+func manifestDir(j SyncJob) string {
+	return filepath.Join("/var/lib/kldload/dr", j.unitName())
+}
+
+// bootManifestTool finds kldload-boot-manifest, or "" when this host does not
+// have it.
+func bootManifestTool() string {
+	for _, p := range []string{
+		"/usr/local/sbin/kldload-boot-manifest",
+		"/usr/sbin/kldload-boot-manifest",
+	} {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p
+		}
+	}
+	if p, err := exec.LookPath("kldload-boot-manifest"); err == nil {
+		return p
+	}
+	return ""
+}
+
+// captureBootManifest records the client's boot facts and keeps its ESP, so a
+// master can rebuild that machine without it being present to ask.
+//
+// Returns a short line for the run transcript. A failure here is a WARNING,
+// not a failure of the run: the replica is still good, and losing the manifest
+// costs a slower rebuild, not the data.
+func captureBootManifest(j SyncJob) (string, error) {
+	tool := bootManifestTool()
+	if tool == "" {
+		return "", fmt.Errorf("kldload-boot-manifest not installed on this host")
+	}
+	dir := manifestDir(j)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	srv := j.server()
+	args := []string{"--pool", strings.SplitN(j.Source, "/", 2)[0],
+		"--esp-archive", filepath.Join(dir, "esp.tar")}
+	if srv.Host != "" {
+		args = append(args, "--host", srv.sshTarget())
+		if srv.KeyPath != "" {
+			args = append(args, "--ssh-key", srv.KeyPath)
+		}
+	}
+	cmd := exec.Command(tool, args...)
+	// stdout is the manifest (data); stderr is progress. Keep them apart, or
+	// the JSON is unparseable — which is how the first capture was ruined.
+	var stdout, stderr strings.Builder
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("%v: %s", err, strings.TrimSpace(firstLine(stderr.String())))
+	}
+	if strings.TrimSpace(stdout.String()) == "" {
+		return "", fmt.Errorf("manifest came out empty")
+	}
+	path := filepath.Join(dir, "manifest.json")
+	if err := os.WriteFile(path, []byte(stdout.String()), 0o644); err != nil {
+		return "", err
+	}
+	esp := ""
+	if fi, err := os.Stat(filepath.Join(dir, "esp.tar")); err == nil && fi.Size() > 0 {
+		esp = fmt.Sprintf(", ESP %s", humanBytes(fi.Size()))
+	}
+	return fmt.Sprintf("boot manifest captured: %s%s\n", path, esp), nil
 }
