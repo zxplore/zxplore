@@ -154,3 +154,41 @@ func TestCronLineCarriesTheSameCommand(t *testing.T) {
 		t.Errorf("the crontab fallback must carry the same guards: %s", line)
 	}
 }
+
+// A failed run must not read like a healthy one. On 2026-09-09 a job died at
+// 03:00:04 with "no route to host" and the listing showed only "enabled", a
+// next run, and a snapshot from the night before — indistinguishable from
+// working. SyncStatus computed the outcome and nothing displayed it.
+func TestSummaryDistinguishesFailureFromSuccess(t *testing.T) {
+	cases := []struct {
+		name  string
+		st    SyncJobState
+		want  string
+		avoid string
+	}{
+		{"failed run says so first",
+			SyncJobState{Enabled: true, LastRun: "Wed 2026-09-09 03:00:04 PDT", LastStatus: "2", Result: "exit-code"},
+			"LAST RUN FAILED", "OK"},
+		{"timeout is named, not just an exit code",
+			SyncJobState{Enabled: true, LastRun: "t", LastStatus: "124", Result: "timeout"},
+			"timeout", ""},
+		{"successful run",
+			SyncJobState{Enabled: true, LastRun: "t", LastStatus: "0", LastOK: true},
+			"last run OK", "FAILED"},
+		{"never run is not the same as failed",
+			SyncJobState{Enabled: true},
+			"has not run yet", "FAILED"},
+		{"not scheduled at all",
+			SyncJobState{},
+			"NOT SCHEDULED", ""},
+	}
+	for _, c := range cases {
+		got := c.st.Summary()
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%s: %q does not contain %q", c.name, got, c.want)
+		}
+		if c.avoid != "" && strings.Contains(got, c.avoid) {
+			t.Errorf("%s: %q must not contain %q", c.name, got, c.avoid)
+		}
+	}
+}

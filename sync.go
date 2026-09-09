@@ -573,7 +573,33 @@ type SyncJobState struct {
 	NextRun    string
 	LastRun    string
 	LastOK     bool
+	LastStatus string // systemd ExecMainStatus, "" if it has never run
+	Result     string // systemd Result: "success", "exit-code", "timeout" …
 	NewestHere string // newest snapshot under the target, "" if none
+}
+
+// Summary is the one line that says whether this job is working. A job whose
+// last run FAILED must not read the same as one that succeeded: on 2026-09-09
+// a run died at 03:00:04 with "no route to host" and the listing showed only
+// "enabled", a next run and a snapshot from the night before. Everything
+// looked fine. That is the failure this whole feature exists to prevent, so
+// the outcome of the last run is now the first thing reported.
+func (s SyncJobState) Summary() string {
+	switch {
+	case s.LastRun == "" || s.LastStatus == "":
+		if s.Enabled {
+			return "scheduled, has not run yet"
+		}
+		return "NOT SCHEDULED"
+	case s.LastOK:
+		return "last run OK, " + s.LastRun
+	default:
+		why := s.Result
+		if why == "" {
+			why = "exit " + s.LastStatus
+		}
+		return "LAST RUN FAILED (" + why + "), " + s.LastRun
+	}
 }
 
 // SyncStatus reads the live state of one job.
@@ -587,9 +613,17 @@ func SyncStatus(j SyncJob) SyncJobState {
 		"-p", "NextElapseUSecRealtime", "--value").Output(); err == nil {
 		st.NextRun = strings.TrimSpace(string(out))
 	}
+	// One property per call: `systemctl show` with several -p and --value
+	// returns them in ITS order, not the order asked for, which is how a
+	// failed run first read as status 0 here.
 	if out, err := exec.Command("systemctl", "show", unit+".service",
 		"-p", "ExecMainStatus", "--value").Output(); err == nil {
-		st.LastOK = strings.TrimSpace(string(out)) == "0"
+		st.LastStatus = strings.TrimSpace(string(out))
+		st.LastOK = st.LastStatus == "0"
+	}
+	if out, err := exec.Command("systemctl", "show", unit+".service",
+		"-p", "Result", "--value").Output(); err == nil {
+		st.Result = strings.TrimSpace(string(out))
 	}
 	if out, err := exec.Command("systemctl", "show", unit+".service",
 		"-p", "ExecMainExitTimestamp", "--value").Output(); err == nil {
@@ -634,6 +668,7 @@ func syncCLI(args []string) int {
 				mark = "enabled"
 			}
 			fmt.Printf("%-20s %s:%s -> %s\n", j.Name, j.label(), j.Source, j.Target)
+			fmt.Printf("  %s\n", st.Summary())
 			fmt.Printf("  %-18s %s   schedule %s\n", mark, j.unitName()+".timer", j.Schedule)
 			if st.NextRun != "" && st.NextRun != "0" {
 				fmt.Printf("  next               %s\n", st.NextRun)

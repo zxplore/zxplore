@@ -180,8 +180,10 @@ func syncTab(w fyne.Window) fyne.CanvasObject {
 		if st.Enabled {
 			state = "enabled"
 		}
-		lines := []string{fmt.Sprintf("%s · %s → %s · schedule %s",
-			state, j.Source, j.Target, j.Schedule)}
+		lines := []string{
+			st.Summary(),
+			fmt.Sprintf("%s · %s → %s · schedule %s", state, j.Source, j.Target, j.Schedule),
+		}
 		if st.NextRun != "" && st.NextRun != "0" {
 			lines = append(lines, "next run:    "+st.NextRun)
 		}
