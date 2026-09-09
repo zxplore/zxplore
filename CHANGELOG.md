@@ -25,6 +25,18 @@ All notable changes to zxplore. Format follows
   diverge from the source.
 
 ### Fixed
+- Restore of an encrypted archive sends *decrypted* when the key is loaded on
+  the archive host. A backup pool is usually encrypted when the source is not
+  — fiend's root is `encryption off`, its copy on onyx inherited onyx's
+  `aes-256-gcm` — and a raw restore preserved that wrapping key, so the
+  restored dataset became its own encryption root with `keystatus
+  unavailable`: a rebuilt machine unable to mount its own filesystem without
+  the backup server's passphrase. Sending decrypted lets the target apply its
+  own policy. Verified by restoring fiend's root from the archive: writable,
+  key available, kernel and `/etc/hostname` intact.
+- A job's last run is recorded by the job, not only by systemd, so a
+  successful `Run now` no longer leaves the tab showing the previous
+  scheduled failure.
 - Raw send is decided from a measured matrix instead of a single probe. `zfs
   send -w` on an *unencrypted* source is `-Lec`, and its embedded-data feature
   is refused by an encrypted receive — exactly the unencrypted-source into

@@ -41,7 +41,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // SyncJob is one scheduled pull. Name is the identity: it becomes the unit
@@ -392,6 +394,49 @@ func syncRunCLI(args []string) int {
 //
 //	0 replicated and verified · 1 replication or verification failed
 //	2 misconfiguration · 124 timed out (a wedged receive, not slowness).
+//
+// syncStatePath is where a run records its own outcome. systemd only knows
+// about runs IT started, so after a successful `Run now` the tab kept showing
+// the 03:00 failure — a working backup reported as broken, which erodes trust
+// in the indicator exactly as much as the reverse (2026-09-09). Every run
+// writes here, so the record is of the JOB, not of one way of starting it.
+// Mode 0644: it holds a timestamp and an exit code, and the GUI reads it
+// without elevation.
+func syncStatePath(j SyncJob) string {
+	return filepath.Join("/var/lib/zxplore", j.unitName()+".state")
+}
+
+type syncRunRecord struct {
+	When string `json:"when"`
+	RC   int    `json:"rc"`
+	Note string `json:"note,omitempty"`
+}
+
+func recordSyncRun(j SyncJob, rc int, note string) {
+	rec := syncRunRecord{When: time.Now().Format(time.RFC1123), RC: rc, Note: note}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return
+	}
+	if os.MkdirAll(filepath.Dir(syncStatePath(j)), 0o755) == nil {
+		// Best effort: a run that worked must not be reported as failed
+		// because its bookkeeping could not be written.
+		_ = os.WriteFile(syncStatePath(j), data, 0o644)
+	}
+}
+
+func lastSyncRun(j SyncJob) (syncRunRecord, bool) {
+	data, err := os.ReadFile(syncStatePath(j))
+	if err != nil {
+		return syncRunRecord{}, false
+	}
+	var rec syncRunRecord
+	if json.Unmarshal(data, &rec) != nil {
+		return syncRunRecord{}, false
+	}
+	return rec, true
+}
+
 func runSyncJob(j SyncJob) (string, int) {
 	var b strings.Builder
 	say := func(f string, a ...any) { fmt.Fprintf(&b, f, a...) }
@@ -401,6 +446,7 @@ func runSyncJob(j SyncJob) (string, int) {
 	srv := j.server()
 	if strings.TrimSpace(srv.Host) == "" {
 		say("job %s has no host, and %q is in neither inventory\n", j.Name, j.Server)
+		recordSyncRun(j, 2, "no host")
 		return b.String(), 2
 	}
 	if syncoidPath() == "" {
@@ -417,6 +463,7 @@ func runSyncJob(j SyncJob) (string, int) {
 	// (2026-09-08).
 	if out, err := run(srv.toHost().command("true")); err != nil {
 		say("cannot reach %s: %s\n", srv.sshTarget(), strings.TrimSpace(firstLine(out+err.Error())))
+		recordSyncRun(j, 2, "unreachable")
 		return b.String(), 2
 	}
 	newest := newestSnapshot(srv.toHost(), j.Source)
@@ -448,6 +495,7 @@ func runSyncJob(j SyncJob) (string, int) {
 	}
 	if rc == 124 {
 		say("FATAL: exceeded %s and was killed — a wedged receive, not slowness.\n", j.runtimeCap())
+		recordSyncRun(j, 124, "timed out")
 		return b.String(), 124
 	}
 	if rc != 0 {
@@ -460,6 +508,7 @@ func runSyncJob(j SyncJob) (string, int) {
 	}
 	if !snapshotPresent(LocalHost(), j.Target, tail) {
 		say("FATAL: %s is NOT under %s. Do not trust this backup.\n", tail, j.Target)
+		recordSyncRun(j, 1, "snapshot did not land")
 		return b.String(), 1
 	}
 	// A count is not a result — but the absence of one is. Verifying a single
@@ -471,9 +520,11 @@ func runSyncJob(j SyncJob) (string, int) {
 	if srcN > 0 && dstN < srcN {
 		say("FATAL: %d of %d datasets present under %s — partial replica, %d missing.\n",
 			dstN, srcN, j.Target, srcN-dstN)
+		recordSyncRun(j, 1, "partial replica")
 		return b.String(), 1
 	}
 	say("OK: %s present, %d/%d datasets under %s.\n", tail, dstN, srcN, j.Target)
+	recordSyncRun(j, 0, fmt.Sprintf("%d/%d datasets", dstN, srcN))
 	return b.String(), 0
 }
 
@@ -628,6 +679,16 @@ func SyncStatus(j SyncJob) SyncJobState {
 	if out, err := exec.Command("systemctl", "show", unit+".service",
 		"-p", "ExecMainExitTimestamp", "--value").Output(); err == nil {
 		st.LastRun = strings.TrimSpace(string(out))
+	}
+	// The job's own record beats systemd's, which only covers runs it started.
+	if rec, ok := lastSyncRun(j); ok {
+		st.LastRun = rec.When
+		st.LastStatus = strconv.Itoa(rec.RC)
+		st.LastOK = rec.RC == 0
+		st.Result = rec.Note
+		if rec.RC == 0 {
+			st.Result = ""
+		}
 	}
 	if snap := newestSnapshot(LocalHost(), j.Target); snap != "" {
 		st.NewestHere = snap

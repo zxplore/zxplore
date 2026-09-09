@@ -1413,7 +1413,10 @@ func replicatePipeline(srcHost Host, srcSnap string, dstHost Host, dstPath strin
 		// spinner at best.
 		send = "zfs send -vP "
 		if restore {
-			send += "-p " // carry mountpoint et al back; a root without one will not boot
+			// Carry mountpoint et al back; a root without one will not boot.
+			// Dropped again below if the source is encrypted and we choose a
+			// decrypted send, because ZFS refuses -p without -w there.
+			send += "-p "
 		}
 		// Raw ALWAYS, except the single combination ZFS refuses. Measured
 		// matrix (file-backed pools, 2026-09-08) — the only failing cell is an
@@ -1432,8 +1435,29 @@ func replicatePipeline(srcHost Host, srcSnap string, dstHost Host, dstPath strin
 		// stays raw — a failed probe must never fall through to plaintext, and
 		// if that combination is genuinely impossible it fails loudly with
 		// "incompatible embedded data stream feature" rather than silently.
-		if !(singleProp(srcHost, srcDs, "encryption") == "off" &&
-			isEncrypted(inheritedEncryption(dstHost, dstPath))) {
+		srcEnc := singleProp(srcHost, srcDs, "encryption")
+		raw := !(srcEnc == "off" && isEncrypted(inheritedEncryption(dstHost, dstPath)))
+		if restore && isEncrypted(srcEnc) &&
+			singleProp(srcHost, srcDs, "keystatus") == "available" {
+			// RESTORE inverts the rule when the key is loaded here.
+			//
+			// An archive is usually encrypted only because the BACKUP pool is:
+			// fiend's root is `encryption off`, but its copy on onyx inherited
+			// onyx's aes-256-gcm. A raw send preserves that wrapping key, so
+			// the restored dataset becomes its OWN encryption root with
+			// keystatus unavailable — a rebuilt machine that cannot mount its
+			// own filesystem without the backup server's passphrase. Measured
+			// on onyx 2026-09-09.
+			//
+			// Sending decrypted instead (the key is available here, so we can)
+			// lets the TARGET apply its own policy and the copy comes back
+			// mountable. -p goes with it: ZFS refuses properties on an
+			// encrypted send unless it is raw, and the archive has no
+			// mountpoints to carry anyway.
+			raw = false
+			send = "zfs send -vP "
+		}
+		if raw {
 			send += "-w "
 		}
 		if base := incrementalBase(srcHost, srcDs, dstHost, dstPath); base != "" {

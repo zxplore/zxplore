@@ -74,3 +74,47 @@ esac`
 		t.Fatalf("unreadable path should report %q, got %q", "", got)
 	}
 }
+
+// RESTORE inverts the raw rule when the archive's key is loaded here.
+//
+// HISTORY: 2026-09-09. fiend's root is `encryption off`; its copy on onyx
+// inherited onyx's aes-256-gcm. Restoring it RAW preserved that wrapping key,
+// so the restored dataset became its own encryption root with keystatus
+// unavailable — a rebuilt machine unable to mount its own filesystem without
+// the backup server's passphrase. Sending decrypted instead let the target
+// apply its own policy, and the copy came back mountable with the kernel
+// intact.
+func TestRestoreOfEncryptedArchivePrefersDecrypted(t *testing.T) {
+	const enc = `echo "zfs $*" >> "$ZX_CMDLOG"
+case "$*" in
+"get -H -o value encryption archive/root")  echo aes-256-gcm ;;
+"get -H -o value keystatus archive/root")   echo available ;;
+"get -H -o value encryption locked/root")   echo aes-256-gcm ;;
+"get -H -o value keystatus locked/root")    echo unavailable ;;
+"get -H -o value encryption dst")           echo off ;;
+*) exit 0 ;;
+esac`
+	t.Run("key available: decrypted, so the target owns the policy", func(t *testing.T) {
+		m := newMock(t)
+		m.script("zfs", enc)
+		p := RestorePipeline(Host{}, "archive/root@s", Host{}, "dst/new")
+		if strings.Contains(p, " -w ") {
+			t.Errorf("must NOT raw-send a restorable archive; got %s", p)
+		}
+		// ZFS refuses -p on an encrypted send that is not raw.
+		if strings.Contains(p, " -p ") {
+			t.Errorf("-p is illegal without -w on an encrypted source; got %s", p)
+		}
+		if !strings.Contains(p, "-x readonly") {
+			t.Errorf("a restored root must not come back readonly; got %s", p)
+		}
+	})
+	t.Run("key unavailable: raw is the only option", func(t *testing.T) {
+		m := newMock(t)
+		m.script("zfs", enc)
+		p := RestorePipeline(Host{}, "locked/root@s", Host{}, "dst/new")
+		if !strings.Contains(p, " -w ") {
+			t.Errorf("without the key the send must be raw; got %s", p)
+		}
+	})
+}
