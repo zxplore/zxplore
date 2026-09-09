@@ -25,12 +25,63 @@ import (
 // one. Two panes in the app's card style: the saved-server list (two-line rows)
 // on the left, a live detail panel + Test/Connect on the right — so the screen
 // reads as a real manager, not a bare list. Reloads after edits.
+// registry says WHICH inventory this manager edits. Servers and clients have
+// the same connection shape and opposite roles, so the manager is parameterised
+// rather than forked: one auth flow (generate/paste a key, authorize it with a
+// one-time password, test) is hard enough to get right once.
+type registry struct {
+	Title string
+	Blurb string
+	Load  func() []Server
+	Save  func([]Server) error
+}
+
+// noun is what one entry is called in prose.
+func (r registry) noun() string {
+	if r.Title == "Clients" {
+		return "client"
+	}
+	return "server"
+}
+
+func (r registry) listHeading() string {
+	if r.Title == "Clients" {
+		return "CLIENTS — nodes this host backs up"
+	}
+	return "SAVED SERVERS"
+}
+
+func (r registry) emptyText() string {
+	return "No saved " + r.noun() + "s yet.\n\n" + r.Blurb +
+		"\n\n＋ New adds a ZFS box (any Linux distro or FreeBSD\nrunning OpenZFS — key-first, passwords never stored)."
+}
+
+var serversRegistry = registry{
+	Title: "Servers",
+	Blurb: "A SERVER is a box this host syncs against — somewhere to browse, or an archive to sync to.",
+	Load:  LoadServers, Save: SaveServers,
+}
+
+var clientsRegistry = registry{
+	Title: "Clients",
+	Blurb: "A CLIENT is a node this host BACKS UP. Add one here, then give it a schedule in Auto Sync.",
+	Load:  LoadClients, Save: SaveClients,
+}
+
 func showServerManager(w fyne.Window, onConnect func(Server)) {
-	servers := LoadServers()
+	showRegistryManager(w, serversRegistry, onConnect)
+}
+
+func showClientManager(w fyne.Window, onConnect func(Server)) {
+	showRegistryManager(w, clientsRegistry, onConnect)
+}
+
+func showRegistryManager(w fyne.Window, reg registry, onConnect func(Server)) {
+	servers := reg.Load()
 	sel := -1
 
 	// ── right: detail panel for the selected server ──
-	detName := dialogHeading("no server selected", acCyan)
+	detName := dialogHeading("no "+reg.noun()+" selected", acCyan)
 	detBody := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Monospace: true})
 	detHint := widget.NewLabel("Pick a server on the left — or ＋ New to add your first ZFS box:\nname + host + user, then generate a key and authorize it\nwith the password ONCE (never stored).")
 	detHint.Wrapping = fyne.TextWrapWord
@@ -40,7 +91,7 @@ func showServerManager(w fyne.Window, onConnect func(Server)) {
 	showDetail := func() {
 		testResult.SetText("")
 		if sel < 0 || sel >= len(servers) {
-			detName.Text = "no server selected"
+			detName.Text = "no " + reg.noun() + " selected"
 			detName.Refresh()
 			detBody.SetText("")
 			detHint.Show()
@@ -98,7 +149,7 @@ func showServerManager(w fyne.Window, onConnect func(Server)) {
 	list.OnSelected = func(i widget.ListItemID) { sel = int(i); showDetail() }
 
 	empty := widget.NewLabelWithStyle(
-		"No saved servers yet.\n\n＋ New adds a ZFS box (any Linux distro or FreeBSD\nrunning OpenZFS — key-first, passwords never stored).",
+		reg.emptyText(),
 		fyne.TextAlignCenter, fyne.TextStyle{})
 	syncEmpty := func() {
 		if len(servers) == 0 {
@@ -110,7 +161,7 @@ func showServerManager(w fyne.Window, onConnect func(Server)) {
 	syncEmpty()
 
 	reload := func() {
-		servers = LoadServers()
+		servers = reg.Load()
 		if sel >= len(servers) {
 			sel = -1
 		}
@@ -121,11 +172,11 @@ func showServerManager(w fyne.Window, onConnect func(Server)) {
 	}
 
 	newBtn := widget.NewButtonWithIcon("New", theme.ContentAddIcon(), func() {
-		serverEditDialog(w, Server{Port: 22}, true, reload)
+		serverEditDialog(w, reg, Server{Port: 22}, true, reload)
 	})
 	editBtn := widget.NewButtonWithIcon("Edit", theme.DocumentCreateIcon(), func() {
 		if sel >= 0 && sel < len(servers) {
-			serverEditDialog(w, servers[sel], false, reload)
+			serverEditDialog(w, reg, servers[sel], false, reload)
 		}
 	})
 	delBtn := widget.NewButtonWithIcon("Delete", theme.DeleteIcon(), func() {
@@ -135,7 +186,7 @@ func showServerManager(w fyne.Window, onConnect func(Server)) {
 		name := servers[sel].Name
 		dialog.ShowConfirm("Delete server", "Remove saved server \""+name+"\"?", func(ok bool) {
 			if ok {
-				_ = SaveServers(DeleteServer(servers, name))
+				_ = reg.Save(DeleteServer(servers, name))
 				reload()
 			}
 		}, w)
@@ -171,7 +222,7 @@ func showServerManager(w fyne.Window, onConnect func(Server)) {
 	connectBtn.Importance = widget.HighImportance
 
 	leftPane := paneCard(container.NewBorder(
-		container.NewVBox(dialogHeading("SAVED SERVERS", acBlue), widget.NewSeparator()),
+		container.NewVBox(dialogHeading(reg.listHeading(), acBlue), widget.NewSeparator()),
 		container.NewHBox(newBtn, editBtn, delBtn),
 		nil, nil,
 		container.NewStack(list, container.NewCenter(empty))))
@@ -183,13 +234,15 @@ func showServerManager(w fyne.Window, onConnect func(Server)) {
 	split := container.NewHSplit(leftPane, rightPane)
 	split.SetOffset(0.5)
 
-	dlg = dialog.NewCustom("Servers", "Close", split, w)
+	dlg = dialog.NewCustom(reg.Title, "Close", split, w)
 	dlg.Resize(fyne.NewSize(940, 560))
 	dlg.Show()
 }
 
-// serverEditDialog edits one server. onSaved runs after a successful Save.
-func serverEditDialog(w fyne.Window, srv Server, isNew bool, onSaved func()) {
+// serverEditDialog edits one entry of reg — a server or a client. reg decides
+// which file it lands in; without it a client would be filed as a server and
+// the timer would never find it.
+func serverEditDialog(w fyne.Window, reg registry, srv Server, isNew bool, onSaved func()) {
 	name := widget.NewEntry()
 	name.SetText(srv.Name)
 	host := widget.NewEntry()
@@ -414,7 +467,7 @@ func serverEditDialog(w fyne.Window, srv Server, isNew bool, onSaved func()) {
 					}
 					srv = s2
 					refreshKey()
-					if err := SaveServers(UpsertServer(LoadServers(), srv)); err != nil {
+					if err := reg.Save(UpsertServer(reg.Load(), srv)); err != nil {
 						dialog.ShowError(err, w)
 						return
 					}
@@ -454,7 +507,7 @@ func serverEditDialog(w fyne.Window, srv Server, isNew bool, onSaved func()) {
 		if !nameOK() {
 			return
 		}
-		if err := SaveServers(UpsertServer(LoadServers(), srv)); err != nil {
+		if err := reg.Save(UpsertServer(reg.Load(), srv)); err != nil {
 			dialog.ShowError(err, w)
 			return
 		}

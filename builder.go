@@ -55,7 +55,7 @@ func fmtBytesDec(b int64) string {
 	units := []struct {
 		unit string
 		div  float64
-	}{{"PB", 1e15}, {"TB", 1e12}, {"GB", 1e9}, {"MB", 1e6}}
+	}{{"PB", 1e15}, {"TB", 1e12}, {"GB", 1e9}, {"MB", 1e6}, {"kB", 1e3}}
 	for _, u := range units {
 		if float64(b) >= u.div {
 			v := float64(b) / u.div

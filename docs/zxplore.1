@@ -17,6 +17,10 @@
 .Fl -builder
 .Ar command
 .Op Ar arg ...
+.Nm
+.Fl -observe
+.Op Ar pool
+.Op Ar command Op Ar arg
 .Sh DESCRIPTION
 .Nm
 is a direct console for OpenZFS: browse datasets and snapshots with a full
@@ -70,6 +74,12 @@ The container estate from a terminal: list, snapshot, snapshots, rollback,
 replicate.
 Commands are in
 .Sx CONTAINERS .
+.It Fl -observe Op Ar pool Op Ar command Op Ar arg
+One second of a pool and the verdicts, from a terminal; the first imported
+pool when none is named.
+Not elevated: the kstats are world-readable.
+Commands are in
+.Sx OBSERVE .
 .El
 .Pp
 Every subcommand prints a usage line and exits 2 when called with the wrong
@@ -515,6 +525,76 @@ are driven by plain
 against the boot dataset DERIVED from the pool's
 .Ql bootfs
 property \(em correct regardless of what the environment is named.
+.Sh OBSERVE
+The Observe tab (F5) is the debugger: one second of a pool, read for you.
+A sample is two reads of the kernel's ZFS kstats
+.Pq Pa /proc/spl/kstat/zfs , No or Xr sysctl 8 Cm kstat.zfs.misc No on Fx
+around one
+.Ql zpool iostat -l
+interval, so every counter carries a per-second rate, plus
+.Ql zpool status -s ,
+.Ql zpool get ,
+the memory and module tunables the verdicts compare against, and the last
+events.
+The verdicts are sentences, each naming the number it read and the property
+or command that changes it, ordered red, gold, green, info:
+.Bl -bullet -offset indent -compact
+.It
+pool health; slow I/Os per device
+.Pq the SLOW column ;
+a device answering many times slower than its siblings; pool read and write
+latency and which wait it is
+.Pq disk, sync queue, async queue ;
+.It
+the write throttle \(em
+.Cm dmu_tx_dirty_delay
+and
+.Cm dmu_tx_dirty_throttle
+against
+.Cm zfs_dirty_data_max
+\(em and txg sync time against
+.Cm zfs_txg_timeout ;
+.It
+ARC demand hit rate, whether the ARC is pinned at a cap far below the host's
+memory, memory-pressure throttling;
+.It
+sync writes landing on the pool when there is no log vdev \(em with the
+datasets doing it, from the per-dataset objset kstats \(em and ZIL commit
+stalls;
+.It
+capacity, fragmentation, dedup enabled with a 1.00 ratio, prefetch that is
+not helping, the busiest datasets, error reports among recent events.
+.El
+.Pp
+The tab adds a Live toggle (a fresh sample every second), the per-vdev
+latency table, the busiest datasets, the events, and a kstat browser that
+shows any group with per-second rates.
+Nothing here needs root; what does
+.Pq Ql zpool events No on some hosts
+is reported as a warning in the sample, never silently dropped.
+.Pp
+From a terminal:
+.Bl -tag -width "--observe POOL kstat GROUP"
+.It Nm Fl -observe Op Ar pool
+One report: gauges, verdicts, vdevs, datasets, events.
+.It Nm Fl -observe Oo Ar pool Oc Cm watch
+The same, redrawn every second until interrupted.
+.It Nm Fl -observe Oo Ar pool Oc Cm json
+The sample and its verdicts as JSON, for a script or a ticket.
+.It Nm Fl -observe Oo Ar pool Oc Cm kstat Ar group
+One kstat group
+.Pq Cm arcstats , zil , dmu_tx , zfetchstats , dbufstats , Ar pool Ns /txgs
+with its counters and their per-second rates.
+.It Nm Fl -observe Oo Ar pool Oc Cm events
+.Ql zpool events -v .
+.El
+.Pp
+What Observe does not do yet is name the process: that is eBPF on Linux and
+.Xr dtrace 1
+on
+.Fx ,
+the next layer.
+The dataset-level answer is usually the one wanted.
 .Sh CONTAINERS
 On a host whose container engine uses the ZFS storage driver, every image
 layer is a real dataset and the store also holds the engine's database, the
@@ -686,9 +766,10 @@ retyping the target's name.
 Browsing, diffing, and drill-downs never need unlocking.
 .Sh KEY BINDINGS (GUI)
 .Bl -tag -width "PgUp/PgDn, Home/End" -compact
-.It F1 / F2 / F3 / F4 / F5
-switch Browser / Builder / Transfer / Explorer / Containers.
-Builder moved into F2 in 1.3.0; Transfer and Explorer are F3 and F4 since.
+.It F1 / F2 / F3 / F4 / F5 / F6
+switch Browser / Builder / Transfer / Explorer / Observe / Containers.
+Builder (F2) and Observe (F5) arrived in 1.3.0; Transfer, Explorer and
+Containers are F3, F4 and F6 since.
 .It Tab
 hop between panes (dataset list/snapshots; transfer left/right; explorer
 files/versions).
@@ -874,6 +955,31 @@ A lab: build a pool on four loop files, without touching a real disk:
 What is running, and whether its layers are datasets:
 .Pp
 .Dl $ zxplore --containers list
+.Pp
+Why is the pool slow right now:
+.Bd -literal -offset indent
+$ zxplore --observe tank
+tank \(em 11:37:20 (1.0 s sample)
+  ARC 100% hit \(pc 17 GB of 17 GB
+  ops 0 r / 55 w \(pc 0 B/s r / 229 kB/s w
+  ...
+VERDICTS
+  [GOLD] sync writes are landing on the main pool
+        21.5 kB/s of ZIL blocks/s, 56 commits/s, no log vdev; from: tank/db 21.5 kB/s
+        fix: a mirrored SLOG (Builder, role log) absorbs them; or sync=disabled ...
+.Ed
+.Pp
+Watch it while the load runs, and keep the numbers for the ticket:
+.Bd -literal -offset indent
+$ zxplore --observe tank watch
+$ zxplore --observe tank json > tank-slow.json
+.Ed
+.Pp
+The ARC counters with rates, and a pool's last transaction groups:
+.Bd -literal -offset indent
+$ zxplore --observe kstat arcstats
+$ zxplore --observe tank kstat tank/txgs
+.Ed
 .Sh DIAGNOSTICS
 Every failure names the command that failed and repeats what
 .Xr zfs 8
@@ -941,7 +1047,7 @@ and portable.
 Version 1.1.0 \(em 2026-07-31.
 Version 1.2.0 \(em 2026-08-19.
 Version 1.3.0 \(em unreleased.
-The Containers tab arrived in 1.2.0, the Builder in 1.3.0.
+The Containers tab arrived in 1.2.0, the Builder and Observe in 1.3.0.
 .Sh AUTHORS
 .An Anthony Aq Mt admin@zxplore.dev
 .Sh CAVEATS
@@ -960,7 +1066,11 @@ the tab and
 .Fl -builder Cm disks
 report the gap rather than showing an empty shelf; the spec form still
 works there when the disks are named in full.
-The Builder has no terminal-UI view yet.
+The Builder and Observe have no terminal-UI view yet; their engines are
+.Fl -builder
+and
+.Fl -observe .
+Observe names datasets, not processes.
 .Pp
 The Containers tab and
 .Fl -containers

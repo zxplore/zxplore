@@ -1347,7 +1347,57 @@ func IsRawSend(pipeline string) bool {
 		strings.Contains(pipeline, " -w -i ")
 }
 
+// isEncrypted reports whether an `encryption` property value means "on".
+// ZFS reports the cipher (e.g. "aes-256-gcm") rather than "on", and "" / "?"
+// mean the probe failed — which is NOT a claim that the dataset is plaintext.
+func isEncrypted(v string) bool {
+	return v != "" && v != "off" && v != "?" && v != "-"
+}
+
+// inheritedEncryption answers "what encryption would a dataset created at this
+// path get?" — needed because on a first replication the target does not exist
+// yet, so probing it directly returns the error value. Walks up to the nearest
+// EXISTING ancestor and reports its encryption, since that is what a newly
+// received child inherits. Returns "" when nothing along the path can be read.
+func inheritedEncryption(h Host, dstPath string) string {
+	for p := dstPath; p != ""; {
+		if v := singleProp(h, p, "encryption"); v != "" && v != "?" {
+			return v
+		}
+		i := strings.LastIndexByte(p, '/')
+		if i < 0 {
+			break
+		}
+		p = p[:i]
+	}
+	return ""
+}
+
+// ReplicatePipeline builds a BACKUP send|recv: the copy lands readonly and
+// canmount=noauto so nothing on the target can write to it and diverge from the
+// source, which is what silently stops a backup receiving further increments.
+// readonly is enforced at the POSIX layer only, so `zfs recv` still applies
+// every later increment through it (verified on file-backed pools, 2026-09-08).
 func ReplicatePipeline(srcHost Host, srcSnap string, dstHost Host, dstPath string) string {
+	return replicatePipeline(srcHost, srcSnap, dstHost, dstPath, false)
+}
+
+// RestorePipeline builds a RECOVERY send|recv: the same machinery pointed the
+// other way, to revive a host from its replica.
+//
+// Two differences from the backup form, and both matter:
+//   - send -p, so mountpoint/compression/recordsize come back with the data. A
+//     restored root that lost its mountpoint does not boot.
+//   - recv -x readonly, which drops JUST that property and lets it fall back to
+//     default off. A root filesystem that is readonly does not boot either, and
+//     the archive being restored FROM is never modified, because a send does not
+//     touch its source. canmount is deliberately not forced here: the received
+//     properties decide, so a boot environment keeps its own noauto.
+func RestorePipeline(srcHost Host, srcSnap string, dstHost Host, dstPath string) string {
+	return replicatePipeline(srcHost, srcSnap, dstHost, dstPath, true)
+}
+
+func replicatePipeline(srcHost Host, srcSnap string, dstHost Host, dstPath string, restore bool) string {
 	srcDs := srcSnap
 	if i := strings.IndexByte(srcSnap, '@'); i >= 0 {
 		srcDs = srcSnap[:i]
@@ -1362,8 +1412,29 @@ func ReplicatePipeline(srcHost Host, srcSnap string, dstHost Host, dstPath strin
 		// Without it the caller has nothing to divide by and can show a
 		// spinner at best.
 		send = "zfs send -vP "
-		if enc := singleProp(srcHost, srcDs, "encryption"); enc != "" && enc != "off" && enc != "?" {
-			send += "-w " // raw: replicate without ever loading the key
+		if restore {
+			send += "-p " // carry mountpoint et al back; a root without one will not boot
+		}
+		// Raw ALWAYS, except the single combination ZFS refuses. Measured
+		// matrix (file-backed pools, 2026-09-08) — the only failing cell is an
+		// unencrypted source into an encrypted target:
+		//
+		//   src plain -> dst plain : raw OK   plain OK
+		//   src plain -> dst ENC   : raw FAIL plain OK   <- the one to avoid
+		//   src ENC   -> dst plain : raw OK   plain OK
+		//   src ENC   -> dst ENC   : raw OK   plain OK
+		//
+		// Raw is preferred rather than merely equivalent: the "plain OK" cells
+		// for an encrypted source only succeed because the key is loaded, and
+		// they put DECRYPTED bytes on the wire and at rest on the target.
+		// So: default raw, and drop it only when we positively know the source
+		// is unencrypted AND the target inherits encryption. An unknown source
+		// stays raw — a failed probe must never fall through to plaintext, and
+		// if that combination is genuinely impossible it fails loudly with
+		// "incompatible embedded data stream feature" rather than silently.
+		if !(singleProp(srcHost, srcDs, "encryption") == "off" &&
+			isEncrypted(inheritedEncryption(dstHost, dstPath))) {
+			send += "-w "
 		}
 		if base := incrementalBase(srcHost, srcDs, dstHost, dstPath); base != "" {
 			send += "-i " + shellQuote(base) + " "
@@ -1375,6 +1446,11 @@ func ReplicatePipeline(srcHost Host, srcSnap string, dstHost Host, dstPath strin
 	}
 
 	recv := "zfs recv -s -F -o readonly=on -o canmount=noauto " + shellQuote(dstPath)
+	if restore {
+		// -x drops readonly from the received stream so it falls back to the
+		// default (off); every other property from send -p is kept.
+		recv = "zfs recv -s -F -x readonly " + shellQuote(dstPath)
+	}
 	if dstHost.SSH != "" {
 		recv = sshPrefix(dstHost) + " " + shellQuote(recv)
 	}

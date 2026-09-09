@@ -19,11 +19,24 @@ All notable changes to zxplore. Format follows
   the same rows.
 - Builder from a terminal: `zxplore --builder {disks,suggest,topology,dry-run,create}`,
   with zpool's own vdev grammar and disk names as the spec.
+- **Observe (F5)** — one second of a pool as verdicts, not counters. Two
+  kstat reads around a `zpool iostat -l` interval give every counter a rate;
+  Judge turns the sample into sentences that name the number read and the
+  knob that changes it: slow I/Os, a vdev many times slower than its
+  siblings, pool latency, the write throttle against `zfs_dirty_data_max`,
+  txg sync time against `zfs_txg_timeout`, ARC hit rate and a cap pinned
+  below the host's RAM, memory-pressure throttling, sync writes landing on a
+  pool with no SLOG (with the datasets doing it, from the objset kstats), ZIL
+  stalls, capacity, fragmentation, dedup for nothing, prefetch, the busiest
+  datasets, error reports. Live mode, the vdev latency table, busiest
+  datasets, events and a kstat browser with rates. Unprivileged.
+- Observe from a terminal: `zxplore --observe [POOL] [watch|json|kstat GROUP|events]`.
 
 ### Changed
-- **Tab order and keys.** Builder is F2; Transfer moved to F3, Explorer to
-  F4, Containers to F5. The Builder sits second on purpose — build the pool,
-  then browse what you built. The manual and the in-app hints say so.
+- **Tab order and keys.** Builder is F2 and Observe F5; Transfer moved to
+  F3, Explorer to F4, Containers to F6. The Builder sits second on purpose —
+  build the pool, then browse what you built. The manual and the in-app
+  hints say so.
 
 ## [1.2.0] — 2026-08-19
 

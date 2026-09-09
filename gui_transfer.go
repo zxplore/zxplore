@@ -139,6 +139,12 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 		}
 	}
 
+	// Restore mode flips the SAME transfer into a recovery: properties travel
+	// with the stream and readonly is dropped, because a restored root that is
+	// readonly or has lost its mountpoint does not boot. Off by default — the
+	// common case is a backup, which must land readonly so nothing can write to
+	// it and diverge from the source.
+	restoreMode := false
 	var replicate func(src, dst *xferPane)
 
 	// offerGrant explains a permission failure on a remote end and, with the
@@ -215,6 +221,9 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 		}
 		dstPath := d + "/" + leaf
 		pipeline := ReplicatePipeline(src.host, snap, dst.host, dstPath)
+		if restoreMode {
+			pipeline = RestorePipeline(src.host, snap, dst.host, dstPath)
+		}
 		dialog.ShowConfirm("Replicate",
 			fmt.Sprintf("Send\n  %s\nto\n  %s:%s\n\nRuns exactly (root):\n  %s\n\nOwnership travels inside the stream as numeric UIDs — the replica is\nbit-exact and readonly; no matching account is needed on the target.",
 				snap, dst.host.Label(), dstPath, pipeline),
@@ -389,7 +398,24 @@ func transferTab(w fyne.Window, switchTab func(fyne.KeyName)) fyne.CanvasObject 
 	// selection into the left window.
 	btnLR := widget.NewButton("Transfer  -->>", func() { replicate(left, right) })
 	btnRL := widget.NewButton("<<--  Transfer", func() { replicate(right, left) })
-	bar := container.NewCenter(container.NewHBox(btnLR, widget.NewLabel("        "), btnRL))
+	restoreChk := widget.NewCheck("Restore mode", func(v bool) {
+		restoreMode = v
+		if v {
+			btnLR.SetText("Restore  -->>")
+			btnRL.SetText("<<--  Restore")
+		} else {
+			btnLR.SetText("Transfer  -->>")
+			btnRL.SetText("<<--  Transfer")
+		}
+	})
+	restoreChk.SetChecked(false)
+	bar := container.NewCenter(container.NewVBox(
+		container.NewCenter(container.NewHBox(btnLR, widget.NewLabel("        "), btnRL)),
+		container.NewCenter(container.NewHBox(restoreChk,
+			widget.NewLabelWithStyle(
+				"writable + keeps mountpoints — for reviving a host, not for backups",
+				fyne.TextAlignLeading, fyne.TextStyle{Italic: true}))),
+	))
 
 	// Same lifted card panels as the Browser/Explorer panes, so every tab
 	// reads as one console.

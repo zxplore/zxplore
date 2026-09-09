@@ -50,7 +50,7 @@ const (
 
 // helpHints is the tmux-style status line along the bottom. Keep it TRUE — only
 // keys/gestures that actually work, so it stays a contract, not decoration.
-const helpHints = "  F1 browser   F2 builder   F3 transfer   F4 explorer   ? manual    ↑↓ move   Tab pane   PgUp/PgDn page   Ctrl+F or / find   Enter/right-click = actions   Alt+Q quit  "
+const helpHints = "  F1 browser   F2 builder   F3 transfer   F4 explorer   F5 observe   ? manual    ↑↓ move   Tab pane   PgUp/PgDn page   Ctrl+F or / find   Enter/right-click = actions   Alt+Q quit  "
 
 // navPage is how many rows PgUp/PgDn jump.
 const navPage = 12
@@ -453,7 +453,7 @@ func (l *navList) TypedKey(e *fyne.KeyEvent) {
 		if l.onFind != nil {
 			l.onFind()
 		}
-	case fyne.KeyF1, fyne.KeyF2, fyne.KeyF3, fyne.KeyF4, fyne.KeyF5:
+	case fyne.KeyF1, fyne.KeyF2, fyne.KeyF3, fyne.KeyF4, fyne.KeyF5, fyne.KeyF6:
 		if l.onFunc != nil {
 			l.onFunc(e.Name)
 		}
@@ -1148,15 +1148,18 @@ func runGUI() {
 	split.SetOffset(0.25) // narrow list, wide dossier (Transfer stays 50/50)
 
 	// ── tabs: hand-built colored bar — Browser blue · Builder cyan ·
-	// Transfer purple · Explorer green · Containers gold, with real air
-	// between the buttons (AppTabs can do neither). F1–F5 and clicks both
-	// land in tabSel. Builder sits second on purpose: build the pool, then
+	// Transfer purple · Explorer green · Observe electric · Containers gold,
+	// with real air between the buttons (AppTabs can do neither). F1–F6 and
+	// clicks both land in tabSel. Builder sits second on purpose: build the pool, then
 	// browse what you built — and it moved Transfer/Explorer to F3/F4 in
 	// 1.3.0 (documented in the changelog and the manual).
 	// Probed once, above switchTab because the key handler needs to know
 	// whether a fourth page exists before the pages are built.
 	hasContainers := HasContainerEngine()
 
+	// Auto Sync is appended last so F1–F6 keep the meanings the manual and
+	// changelog already document; a renamed key is a broken interface.
+	syncIdx := -1
 	var tabSel func(int)
 	switchTab := func(n fyne.KeyName) {
 		if tabSel == nil {
@@ -1172,10 +1175,16 @@ func runGUI() {
 		case fyne.KeyF4:
 			tabSel(3)
 		case fyne.KeyF5:
-			// Guarded: without an engine there is no fifth page, and
+			tabSel(4)
+		case fyne.KeyF6:
+			// Guarded: without an engine there is no sixth page, and
 			// selecting one would hide every tab and show nothing.
 			if hasContainers {
-				tabSel(4)
+				tabSel(5)
+			}
+		case fyne.KeyF7:
+			if syncIdx >= 0 {
+				tabSel(syncIdx)
 			}
 		}
 	}
@@ -1194,7 +1203,8 @@ func runGUI() {
 			container.NewHBox(widget.NewLabel("zpool:"), explorerSel)),
 		nil, nil, nil, explorerBody)
 	builderPage, builderFocus := builderTab(w, switchTab, reload)
-	pages := []fyne.CanvasObject{split, builderPage, transferTab(w, switchTab), explorerPage}
+	observePage, observeFocus := observeTab(w, switchTab)
+	pages := []fyne.CanvasObject{split, builderPage, transferTab(w, switchTab), explorerPage, observePage}
 
 	// Containers, only where there is an engine to manage.
 	//
@@ -1204,6 +1214,20 @@ func runGUI() {
 	// than no tab.
 	if hasContainers {
 		pages = append(pages, containersTab(w))
+	}
+
+	// Auto Sync: scheduled replication, and whether it is actually running.
+	//
+	// kldload-only, deliberately. Unattended backup across an estate is a
+	// kldload feature: it assumes sanoid on every node, systemd timers, an
+	// Ansible inventory and a WireGuard fabric to render from this same client
+	// list. zxplore itself runs anywhere OpenZFS does — FreeBSD and illumos
+	// included — and must not grow a tab that only works on one of them.
+	// Interactive replication (F3 Transfer, including Restore mode) stays
+	// available everywhere; it is the SCHEDULING that is ecosystem-bound.
+	if IsKldload() {
+		syncIdx = len(pages)
+		pages = append(pages, syncTab(w))
 	}
 
 	var tabBtns []*widget.Button
@@ -1222,10 +1246,14 @@ func runGUI() {
 		mkTab(0, "⌂  Browser", acBlue), tabGap(),
 		mkTab(1, "⚒  Builder", acCyan), tabGap(),
 		mkTab(2, "⇄  Transfer", acPurple), tabGap(),
-		mkTab(3, "🗁  Explorer", acGreen),
+		mkTab(3, "🗁  Explorer", acGreen), tabGap(),
+		mkTab(4, "◉  Observe", acElectric),
 	}
 	if hasContainers {
-		barItems = append(barItems, tabGap(), mkTab(4, "▣  Containers", acGold))
+		barItems = append(barItems, tabGap(), mkTab(5, "▣  Containers", acGold))
+	}
+	if syncIdx >= 0 {
+		barItems = append(barItems, tabGap(), mkTab(syncIdx, "⟳  Auto Sync", acTopic))
 	}
 	tabBar := container.NewHBox(barItems...)
 	tabSel = func(i int) {
@@ -1252,6 +1280,10 @@ func runGUI() {
 		case 3:
 			if explorerFocus != nil {
 				w.Canvas().Focus(explorerFocus)
+			}
+		case 4:
+			if observeFocus != nil {
+				w.Canvas().Focus(observeFocus)
 			}
 		}
 	}

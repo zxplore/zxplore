@@ -43,7 +43,7 @@ func main() {
 			fmt.Println("zxplore " + versionFull())
 			return
 		case "--help", "-h":
-			fmt.Print("usage: zxplore [--tui] [--builder cmd] [--containers [cmd]] [--version]\n\n" +
+			fmt.Print("usage: zxplore [--tui] [--builder cmd] [--observe [pool] [cmd]] [--containers [cmd]] [--sync-run job] [--version]\n\n" +
 				"  (no flags)   native GUI (static builds start the TUI)\n" +
 				"  --tui        terminal UI — headless / SSH\n" +
 				"  --version    print version and exit\n\n" +
@@ -58,7 +58,19 @@ func main() {
 				"  --builder suggest NAME DISK… candidate layouts for those disks, with the create line\n" +
 				"  --builder topology POOL      an imported pool's vdev tree\n" +
 				"  --builder dry-run NAME SPEC… what zpool would build (zpool create -n)\n" +
-				"  --builder create NAME SPEC…  build it — SPEC is the zpool vdev grammar with disk names\n\n" +
+				"  --builder create NAME SPEC…  build it — SPEC is the zpool vdev grammar with disk names\n" +
+				"  --observe [POOL]             one second of the pool: gauges, verdicts, vdev latency, busy datasets\n" +
+				"  --observe [POOL] watch       the same, refreshed every second\n" +
+				"  --observe [POOL] json        the sample and verdicts as JSON\n" +
+				"  --observe [POOL] kstat GROUP a kstat group with per-second rates (arcstats, zil, POOL/txgs …)\n" +
+				"  --observe [POOL] events      zpool events -v\n\n" +
+				"AUTO SYNC — scheduled replication (a timer runs these; you rarely type it)\n" +
+				"  --sync [list]                Auto Sync jobs, and whether each timer is enabled\n" +
+				"  --sync show JOB              the exact command a job runs, and encryption warnings\n" +
+				"  --sync install JOB           write + enable its timer, and verify it is enabled\n" +
+				"  --sync remove JOB            stop and delete its timer\n" +
+				"  --sync-run JOB               run one saved Auto Sync job now: probe both ends,\n" +
+				"                               pull, then verify the snapshot actually landed\n\n" +
 				"With the zfs storage driver every image layer is a dataset, so the\n" +
 				"whole container estate snapshots and replicates as one unit.\n\n" +
 				"Documentation: man zxplore\n")
@@ -67,6 +79,26 @@ func main() {
 			elevate() // safe in a terminal — root inherits the tty
 			runTUI()
 			return
+		case "--sync":
+			// Auto Sync from a terminal: what is scheduled, what it would run,
+			// install/remove its timer. elevate() because installing a unit and
+			// reading the system job list both need root.
+			elevate()
+			os.Exit(syncCLI(os.Args[2:]))
+		case "--sync-run":
+			// What an Auto Sync timer executes. NOT interactive and not a
+			// GUI path: it runs from a systemd unit at 03:00 with nobody
+			// logged in. elevate() because the pull does `zfs receive` into
+			// the archive; under the unit it is already root and this is a
+			// no-op, but a hand-run from a terminal still works.
+			elevate()
+			os.Exit(syncRunCLI(os.Args[2:]))
+		case "--observe":
+			// One second of a pool and the verdicts, from a terminal. Not
+			// elevated: the kstats are world-readable and zpool iostat/get/
+			// status run unprivileged; what needs root (events on some
+			// hosts) lands in the report's warnings rather than a prompt.
+			os.Exit(observeCLI(os.Args[2:]))
 		case "--builder":
 			// Terminal path to the pool Builder — the shelf, the candidate
 			// layouts, an imported pool's vdev tree, dry run and create — for

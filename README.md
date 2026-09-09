@@ -43,11 +43,12 @@ before it runs, written to an audit log after. Click it or type it; same
 primitives either way.
 
 `zxplore` is a keyboard-driven console for an existing OpenZFS install.
-Five tabs — **Browser** (F1), **Builder** (F2), **Transfer** (F3),
-**Explorer** (F4), **Containers** (F5) — over one engine: browse datasets
-with a full properties + permissions dossier, design and create a pool from
-the disks the box has, snapshot datasets, restore any file from any snapshot,
-diff two points in time, replicate to another pool or host over SSH, and see
+Six tabs — **Browser** (F1), **Builder** (F2), **Transfer** (F3),
+**Explorer** (F4), **Observe** (F5), **Containers** (F6) — over one engine:
+browse datasets with a full properties + permissions dossier, design and
+create a pool from the disks the box has, snapshot datasets, restore any file
+from any snapshot, diff two points in time, replicate to another pool or host
+over SSH, read one second of a pool as verdicts instead of counters, and see
 the container estate as the storage it actually is.
 
 It's a **primitives** tool, not a management UI: every action maps to a plain
@@ -203,6 +204,50 @@ the textbook numbers (parity subtracted, smallest member sets the size);
 RAIDZ pads a few percent on top, which is why the dry run is the truth.
 The shelf comes from `lsblk`, so it is Linux-only for now; the tab says so
 on FreeBSD rather than showing an empty shelf.
+
+## Observe — one second of a pool, and what it means
+
+Every ZFS dashboard shows the counters. Observe reads them for you. One
+sample is two kstat reads around one `zpool iostat -l` interval, so every
+counter has a per-second rate, and then **Judge** turns the sample into
+sentences — each one naming the number it read and the knob that changes it:
+
+```
+$ zxplore --observe rpool
+rpool — 11:37:20 (1.0 s sample)
+  ARC 100% hit · 17 GB of 17 GB
+  ops 0 r / 55 w · 0 B/s r / 229 kB/s w
+  latency r - / w 320 µs
+  txg sync avg 16.0 ms
+  ZIL 21.5 kB/s pool / 0 B/s slog · 56 commits/s
+  ...
+VERDICTS
+  [GOLD] sync writes are landing on the main pool
+        21.5 kB/s of ZIL blocks/s, 56 commits/s, no log vdev; from: rpool/home/anthony 21.5 kB/s
+        fix: a mirrored SLOG (Builder, role log) absorbs them; or sync=disabled on a dataset whose last seconds of writes are expendable
+  [INFO] busiest datasets this second
+        rpool/home/anthony r 130 kB/s w 3.7 MB/s · rpool/ROOT/onyx r 181 kB/s w 11 kB/s
+```
+
+What it judges: pool health and slow-I/O counters; a vdev answering many
+times slower than its siblings; pool read/write latency; the write throttle
+(`dmu_tx_dirty_delay` / `dirty_throttle` against `zfs_dirty_data_max`); txg
+sync time against `zfs_txg_timeout`; ARC hit rate, and whether the ARC is
+pinned at a cap far below the host's RAM; memory-pressure throttling; sync
+writes landing on the pool when there is no SLOG, with the datasets doing
+it; ZIL commit stalls; capacity and fragmentation; dedup enabled with a
+1.00 ratio; prefetch not helping; the busiest datasets; error reports among
+recent events. Per-dataset numbers come from the objset kstats, so "which
+dataset is hot" needs no eBPF and no root.
+
+The tab has a Live toggle (a fresh sample every second), the vdev latency
+table, the busiest datasets, recent events and a kstat browser with rates.
+From a shell: `--observe [POOL]` for one report, `watch` to refresh every
+second, `json` for the sample and verdicts as JSON, `kstat GROUP` for a
+group with rates, `events` for `zpool events -v`.
+
+Not yet: a per-process view ("who" rather than "which dataset") — that is
+eBPF on Linux and dtrace on FreeBSD, and it is the next layer.
 
 ## Explorer — files across snapshots
 
@@ -382,6 +427,12 @@ zxplore --builder suggest NAME DISK…   # candidate pool layouts + create lines
 zxplore --builder dry-run NAME SPEC…   # zpool create -n
 zxplore --builder create NAME SPEC…    # build the pool
 zxplore --builder topology POOL        # an imported pool's vdev tree
+
+zxplore --observe [POOL]               # one second of the pool: gauges, verdicts, vdevs, datasets
+zxplore --observe [POOL] watch         # the same, refreshed every second
+zxplore --observe [POOL] json          # the sample and verdicts as JSON
+zxplore --observe [POOL] kstat GROUP   # a kstat group with per-second rates
+zxplore --observe [POOL] events        # zpool events -v
 ```
 
 The TUI is a full console, not a fallback — browser, transfer, the snapshot
@@ -389,7 +440,7 @@ file explorer, and pool drill-downs, with a `:` command bar, `/` filter,
 vim keys, and a `?` key overlay. It is **read-only by default**: mutations
 need `:rw` first, and destroys demand retyping the target's name.
 
-**Keys:** `F1`–`F5` switch Browser / Builder / Transfer / Explorer /
+**Keys:** `F1`–`F6` switch Browser / Builder / Transfer / Explorer / Observe /
 Containers · `?` opens the manual · `Tab` hop between panes · `↑↓` `PgUp`/`PgDn` `Home`/`End` move ·
 `Ctrl+F` (or `/`) find · **right-click a dataset** for the full lifecycle
 menu · `Enter` or click a snapshot for actions · `Esc` dismiss · `Alt+Q` quit.

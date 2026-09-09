@@ -355,3 +355,47 @@ func friendlySSH(err error, s Server) error {
 	}
 	return err
 }
+
+// ── clients ──────────────────────────────────────────────────────────────────
+//
+// A CLIENT is a node this host backs up — fiend, a lab box, a laptop. A SERVER
+// is a box this host syncs against: somewhere to browse, or an upstream
+// archive to push our own copy to. Same connection shape, opposite direction,
+// so they are deliberately two lists rather than one list with a flag: "which
+// machines do I protect" is the question an operator actually asks, and it
+// should not require filtering.
+//
+// Clients live SYSTEM-wide, unlike servers. A backup job for a client runs
+// from a root timer, so root has to be able to read the inventory; a per-user
+// list would produce a job that works when you press Run now and fails at
+// 03:00. Mode 0644 on purpose — this holds hostnames, usernames and the PATH
+// of a key, never a key — so the GUI can list clients without elevation.
+// Getting that wrong showed an empty Auto Sync tab while a timer was enabled
+// and running (onyx, 2026-09-08).
+
+func clientsPath() string { return "/etc/zxplore/clients.json" }
+
+func LoadClients() []Server {
+	data, err := os.ReadFile(clientsPath())
+	if err != nil {
+		return nil
+	}
+	var list []Server
+	if json.Unmarshal(data, &list) != nil {
+		return nil
+	}
+	return list
+}
+
+// SaveClients writes the system client inventory. Needs root, like any other
+// estate-level change.
+func SaveClients(list []Server) error {
+	if err := os.MkdirAll(filepath.Dir(clientsPath()), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(list, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(clientsPath(), data, 0o644)
+}
