@@ -393,14 +393,12 @@ func (r *dsRow) Tapped(*fyne.PointEvent) {
 	}
 }
 
-// DoubleTapped folds or unfolds. Fyne delivers Tapped first, so the row is
-// already selected by the time this runs, which is what an operator expects:
-// the thing you folded is the thing you are looking at.
-func (r *dsRow) DoubleTapped(*fyne.PointEvent) {
-	if r.onFold != nil {
-		r.onFold(r.idx)
-	}
-}
+// DoubleTapped exists ONLY to swallow the second tap. Folding moved to the
+// single click -- "double click .. i guess thats ok. sho[uld] be single click?"
+// -- and without this method Fyne would deliver a double click as two Tapped
+// events, folding and instantly unfolding again. Implementing the interface
+// makes the sequence Tapped once, then this, which does nothing.
+func (r *dsRow) DoubleTapped(*fyne.PointEvent) {}
 
 // ── navList ──────────────────────────────────────────────────────────────────
 // navList extends widget.List with the keys Fyne's List omits: PgUp/PgDn and
@@ -800,8 +798,10 @@ func runGUI() {
 			row := newDSRow()
 			// The row consumes the tap, so it has to do the selecting the
 			// List's own wrapper would otherwise have done.
-			row.onTap = func(i int) { list.selectAt(i) }
-			row.onFold = func(i int) {
+			// One click selects AND folds. foldAt does nothing on a row with
+			// no children, so a leaf just selects.
+			row.onTap = func(i int) {
+				list.selectAt(i)
 				if foldAt != nil {
 					foldAt(i)
 				}
@@ -814,22 +814,32 @@ func runGUI() {
 			row.idx = int(i)
 			t := row.txt
 			t.Text = r.Line()
+			t.TextStyle = fyne.TextStyle{Monospace: true}
+			// NOTHING here is drawn in the disabled colour any more. The first
+			// cut dimmed every row with no files behind it, which on onyx made
+			// the POOL rows the faintest text on screen -- rpool is
+			// canmount=off, so it was scaffolding by that rule -- and made
+			// containers look like they could not be clicked when every row is
+			// selectable and every row has a dossier. "you can see the thing
+			// like the vms and all of those are dark .. they should be
+			// selectable and visible" (onyx, 2026-09-12).
+			//
+			// So colour carries INFORMATION and never permission. Order
+			// matters: dsUnmounted used to sit behind an Openable() test that
+			// is false for it, so the red branch was unreachable and a dataset
+			// that failed to mount drew as quiet grey.
 			switch {
 			case int(i) == list.cursor:
 				t.Color = acBlue.at()
 				t.TextStyle = fyne.TextStyle{Monospace: true, Bold: true}
-			case !r.Openable():
-				// A container or a zvol has nothing to open. Dimming it is the
-				// whole point of the tree: eleven of fiend's 28 rows are this,
-				// and the flat list drew them as bright as real data.
-				t.Color = theme.Color(theme.ColorNameDisabled)
-				t.TextStyle = fyne.TextStyle{Monospace: true}
 			case r.Kind == dsUnmounted:
-				t.Color = acRed.at()
-				t.TextStyle = fyne.TextStyle{Monospace: true}
+				t.Color = acRed.at() // failed to mount: the one alarm here
+			case r.Depth == 0 && !r.Flat:
+				t.Color = acGold.at() // a pool, the same gold as the ZPOOLS panel
+			case r.Kind == dsVolume:
+				t.Color = acPurple.at() // a block device, not a filesystem
 			default:
 				t.Color = theme.Color(theme.ColorNameForeground)
-				t.TextStyle = fyne.TextStyle{Monospace: true}
 			}
 			t.Refresh()
 		},
@@ -842,7 +852,7 @@ func runGUI() {
 	// Find: "/" focuses this entry; typing filters the list live; Enter returns
 	// focus to the list. Substring match on the dataset name (case-insensitive).
 	search := widget.NewEntry()
-	search.SetPlaceHolder("filter datasets…  ( / search · double-click or ← → folds)")
+	search.SetPlaceHolder("filter datasets…  ( / search · click a pool to open it )")
 	applyFilter := func(q string) {
 		q = strings.ToLower(strings.TrimSpace(q))
 		if q == "" {

@@ -149,48 +149,65 @@ func TestBuildTreeDepthAndOrder(t *testing.T) {
 	}
 }
 
-func TestDefaultCollapsedFoldsOnlyScaffolding(t *testing.T) {
+func TestDefaultViewIsOneLinePerPool(t *testing.T) {
 	rows := parseDatasetList(fiendList, "")
-	collapsed := DefaultCollapsed(rows)
-	wantFolded := []string{"rpool/ROOT", "rpool/kldload", "rpool/usr", "rpool/var", "rpool/vms"}
-	for _, n := range wantFolded {
-		if !collapsed[n] {
-			t.Errorf("%s should start folded: it is a container with children", n)
-		}
-	}
-	if len(collapsed) != len(wantFolded) {
-		t.Errorf("folded %d datasets (%v), want exactly %v", len(collapsed), collapsed, wantFolded)
-	}
-	// A pool is never folded, and neither is anything with files in it.
-	for _, n := range []string{"rpool", "void", "rpool/home", "rpool/opt"} {
-		if collapsed[n] {
-			t.Errorf("%s must not start folded", n)
-		}
-	}
-	tree := BuildTree(rows, collapsed)
-	if len(tree) != 13 {
-		t.Errorf("the default view is %d rows, want 13 (from 28)", len(tree))
+	tree := BuildTree(rows, DefaultCollapsed(rows))
+
+	// The whole ask: open on the pools and nothing else.
+	if len(tree) != 2 {
+		t.Errorf("the default view is %d rows, want 2 (one per pool, from 28)", len(tree))
 		for _, r := range tree {
 			t.Logf("  %s", r.Line())
 		}
 	}
-	// Both pools, and every mounted filesystem outside a folded container, are
-	// still on screen.
-	shown := map[string]bool{}
 	for _, r := range tree {
-		shown[r.DS.Name] = true
+		if r.Depth != 0 {
+			t.Errorf("%s is not a pool root but shows by default", r.DS.Name)
+		}
 	}
-	for _, n := range []string{"rpool", "void", "rpool/home", "rpool/home/admin", "rpool/opt",
-		"rpool/root", "rpool/srv", "rpool/tmp"} {
-		if !shown[n] {
-			t.Errorf("%s is hidden in the default view", n)
+	got := map[string]TreeRow{}
+	for _, r := range tree {
+		got[r.DS.Name] = r
+	}
+	for _, n := range []string{"rpool", "void"} {
+		if _, ok := got[n]; !ok {
+			t.Errorf("pool %s is missing from the default view", n)
+		}
+	}
+	// A pool that hides 10 children has to say so, because the count is the
+	// only thing telling an operator there is anything down there.
+	if !strings.Contains(got["rpool"].Line(), "(10)") {
+		t.Errorf("rpool hides its children without saying so: %q", got["rpool"].Line())
+	}
+	if got["void"].Kids != 0 {
+		t.Errorf("void has %d children in the fixture, want 0", got["void"].Kids)
+	}
+
+	// Unfolding one pool reveals exactly its direct children, and no deeper:
+	// everything below is still folded.
+	collapsed := DefaultCollapsed(rows)
+	delete(collapsed, "rpool")
+	tree = BuildTree(rows, collapsed)
+	if len(tree) != 12 { // rpool + its 10 + void
+		t.Errorf("unfolding rpool gives %d rows, want 12", len(tree))
+		for _, r := range tree {
+			t.Logf("  %s", r.Line())
+		}
+	}
+	for _, r := range tree {
+		if r.Depth > 1 {
+			t.Errorf("%s at depth %d: unfolding one level must not unfold the rest", r.DS.Name, r.Depth)
 		}
 	}
 }
 
 func TestTreeLineLayout(t *testing.T) {
 	rows := parseDatasetList(fiendList, "")
-	tree := BuildTree(rows, DefaultCollapsed(rows))
+	// One level open: pools plus their children, so both folded and unfolded
+	// rows are on screen at once.
+	collapsed := DefaultCollapsed(rows)
+	delete(collapsed, "rpool")
+	tree := BuildTree(rows, collapsed)
 	for _, r := range tree {
 		line := r.Line()
 		if strings.Contains(line, "\t") {
@@ -218,7 +235,8 @@ func TestTreeLineLayout(t *testing.T) {
 	// Every folded row must say how many children it hides: with the subtree
 	// gone, that count is the only thing telling an operator to look inside.
 	for n, kids := range map[string]string{
-		"rpool/var": "(5)", "rpool/vms": "(4)", "rpool/ROOT": "(2)", "rpool/kldload": "(3)",
+		"rpool/var": "(5)", "rpool/vms": "(4)", "rpool/ROOT": "(2)",
+		"rpool/kldload": "(3)", "rpool/home": "(1)",
 	} {
 		if !strings.Contains(byName[n].Line(), kids) {
 			t.Errorf("%s hides its children without saying so: %q", n, byName[n].Line())
@@ -227,8 +245,11 @@ func TestTreeLineLayout(t *testing.T) {
 			t.Errorf("%s folded marker %q", n, m)
 		}
 	}
-	if m := byName["rpool/home"].marker(); m != "▾ " {
+	if m := byName["rpool"].marker(); m != "▾ " {
 		t.Errorf("expanded marker %q", m)
+	}
+	if m := byName["rpool/opt"].marker(); m != "  " {
+		t.Errorf("a leaf must have no marker, got %q", m)
 	}
 	// And the goldens still classify as block devices once unfolded.
 	full := map[string]TreeRow{}

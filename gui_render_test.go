@@ -128,13 +128,17 @@ func TestDSRowTapAndDoubleTap(t *testing.T) {
 	row.onFold = func(i int) { folded = append(folded, i) }
 
 	row.Tapped(nil)
-	row.DoubleTapped(nil)
-
 	if len(tapped) != 1 || tapped[0] != 7 {
-		t.Errorf("a tap must select the row it is on, got %v", tapped)
+		t.Errorf("a tap must act on the row it is on, got %v", tapped)
 	}
-	if len(folded) != 1 || folded[0] != 7 {
-		t.Errorf("a double tap must fold the row it is on, got %v", folded)
+	// A double click must fold ONCE, not fold and unfold. DoubleTapped is the
+	// sink for the second tap; without the method Fyne sends two Tapped.
+	row.DoubleTapped(nil)
+	if len(tapped) != 1 {
+		t.Errorf("the second tap of a double click leaked through: %v", tapped)
+	}
+	if len(folded) != 0 {
+		t.Errorf("onFold is no longer the double-tap path, got %v", folded)
 	}
 
 	// A row with nothing wired must not panic: the list rebuilds rows, and the
@@ -142,6 +146,7 @@ func TestDSRowTapAndDoubleTap(t *testing.T) {
 	bare := newDSRow()
 	bare.Tapped(nil)
 	bare.DoubleTapped(nil)
+	_ = folded
 
 	// The renderer must exist, or the row never draws.
 	if r := newDSRow().CreateRenderer(); r == nil {
