@@ -157,3 +157,60 @@ func TestCreateGate(t *testing.T) {
 		t.Errorf("the typed name did not reach the argv: %s", strings.Join(got.Argv(), " "))
 	}
 }
+
+// TestCreateFeedbackSurvivesRescan guards the ORDER in afterCreate. rescan ends
+// by overwriting b.status with its own "N disks, M free" and rendering that, so
+// a success line set before it is destroyed before it is ever drawn. That is
+// how void was created on fiend with seven disks in it while the UI said
+// nothing at all (2026-09-12): the operator had no way to tell a create that
+// worked from one that did nothing, because only the failure path was a dialog.
+func TestCreateFeedbackSurvivesRescan(t *testing.T) {
+	m := newMock(t)
+	m.script("lsblk", `echo "lsblk $*" >> "$ZX_CMDLOG"
+cat <<'EOF2'
+{"blockdevices":[
+ {"name":"sda","path":"/dev/sda","size":8001563222016,"model":"ST8000VN004","serial":"A","rota":true,"tran":"sas","type":"disk","fstype":null,"mountpoint":null,"label":null,"id-link":"wwn-0xA"},
+ {"name":"sdb","path":"/dev/sdb","size":8001563222016,"model":"ST8000VN004","serial":"B","rota":true,"tran":"sas","type":"disk","fstype":null,"mountpoint":null,"label":null,"id-link":"wwn-0xB"},
+ {"name":"sdc","path":"/dev/sdc","size":8001563222016,"model":"ST8000VN004","serial":"C","rota":true,"tran":"sas","type":"disk","fstype":null,"mountpoint":null,"label":null,"id-link":"wwn-0xC"}
+]}
+EOF2`)
+	m.script("zpool", `echo "zpool $*" >> "$ZX_CMDLOG"
+case "$*" in
+  "list -H -o name") echo void ;;
+esac`)
+	test.NewApp()
+	w := test.NewWindow(nil)
+	defer w.Close()
+	reloaded := 0
+	ui := newBuilderUI(w, func(fyne.KeyName) {}, func() { reloaded++ })
+	w.SetContent(ui.page)
+
+	// Tick a disk so there is state for the create to clear.
+	ui.toggle(0)
+	if len(ui.st.chosen) != 1 {
+		t.Fatalf("setup: %d ticks, want 1", len(ui.st.chosen))
+	}
+
+	ui.afterCreate(Design{Name: "void", Ashift: 12})
+
+	if !strings.HasPrefix(ui.st.status, "✓") {
+		t.Errorf("status %q has no ✓ — render only shows the status label for ✓/✗/tick, so this is the silent create", ui.st.status)
+	}
+	if !strings.Contains(ui.st.status, "void") {
+		t.Errorf("status %q does not name the pool that was created", ui.st.status)
+	}
+	// The rest of the sequence must still have happened: rescan ran, the ticks
+	// and the layout were cleared, and the main window was told to reload.
+	if len(ui.st.disks) != 3 {
+		t.Errorf("rescan did not run: %d disks on the shelf, want 3", len(ui.st.disks))
+	}
+	if len(ui.st.chosen) != 0 {
+		t.Errorf("ticks survived the create: %d", len(ui.st.chosen))
+	}
+	if len(ui.st.design.Vdevs) != 0 {
+		t.Errorf("the layout survived the create: %+v", ui.st.design.Vdevs)
+	}
+	if reloaded != 1 {
+		t.Errorf("onPoolCreated fired %d times, want 1", reloaded)
+	}
+}

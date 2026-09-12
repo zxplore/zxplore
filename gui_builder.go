@@ -191,6 +191,9 @@ type builderUI struct {
 	command *widget.Label
 	dryRun  *widget.Button
 	create  *widget.Button
+	// afterCreate is the post-create state update; exported to the test so the
+	// status-clobber regression has a guard that does not need a click.
+	afterCreate func(Design)
 }
 
 // builderTab builds the F2 page. onPoolCreated tells the main window to
@@ -399,6 +402,23 @@ func newBuilderUI(w fyne.Window, switchTab func(fyne.KeyName), onPoolCreated fun
 			})
 		}()
 	})
+	// afterCreate is the success half of a create, out of the button closure so
+	// a test can run the sequence.
+	//
+	// ORDER MATTERS: rescan() ends by overwriting b.status with its own
+	// "N disks, M free" and rendering that, so the success line has to be set
+	// AFTER it or it is destroyed before it is ever drawn. It used to be set
+	// before, which is why void came up on fiend with seven disks in it and the
+	// UI said nothing at all (2026-09-12). Only the failure path was visible,
+	// because that one is a dialog. TestCreateFeedbackSurvivesRescan guards it.
+	afterCreate := func(final Design) {
+		b.design.Vdevs = nil
+		b.chosen = map[string]bool{}
+		rescan()
+		b.status = "✓ pool " + final.Name + " created"
+		render()
+		onPoolCreated()
+	}
 	create := widget.NewButton("Create pool…", func() {
 		d := b.design
 		if err := d.Validate(); err != nil {
@@ -422,11 +442,22 @@ func newBuilderUI(w fyne.Window, switchTab func(fyne.KeyName), onPoolCreated fun
 						showMono(w, "zpool create failed", err.Error())
 						return
 					}
-					b.status = "✓ pool " + final.Name + " created"
-					b.design.Vdevs = nil
-					b.chosen = map[string]bool{}
-					rescan()
-					onPoolCreated()
+					afterCreate(final)
+					// Read the pool back and show what landed. A dialog,
+					// because erasing seven disks deserves more than a status
+					// line, and the topology is proof the pool is there rather
+					// than a claim that zpool exited 0.
+					go func() {
+						t, terr := PoolTopology(b.host, final.Name)
+						fyne.Do(func() {
+							if terr != nil {
+								showMono(w, "pool "+final.Name+" created",
+									"zpool create reported success, but reading the pool back failed:\n\n"+terr.Error())
+								return
+							}
+							showMono(w, "pool "+final.Name+" created", t.Flatten())
+						})
+					}()
 				})
 			}()
 		})
@@ -615,7 +646,7 @@ func newBuilderUI(w fyne.Window, switchTab func(fyne.KeyName), onPoolCreated fun
 
 	rescan()
 	refreshPools()
-	return &builderUI{page: container.NewBorder(nil, nil, nil, nil, page), shelf: shelf, st: b, toggle: toggle, render: render, command: command, dryRun: dryRun, create: create}
+	return &builderUI{page: container.NewBorder(nil, nil, nil, nil, page), shelf: shelf, st: b, toggle: toggle, render: render, command: command, dryRun: dryRun, create: create, afterCreate: afterCreate}
 }
 
 // reflow recomputes the candidates for the current ticks and loads the first
