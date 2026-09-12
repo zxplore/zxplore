@@ -27,6 +27,14 @@ type Dataset struct {
 	Used  string
 	Refer string
 	Snaps int
+
+	// What ZFS says this row IS, so the browser can tell a container apart
+	// from something with files behind it without guessing from the name.
+	// All four ride along on the same `zfs list` -- no extra call.
+	Type       string // filesystem | volume
+	CanMount   string // on | off | noauto   ("-" for a volume)
+	Mounted    bool   // mounted RIGHT NOW
+	Mountpoint string // none | - | a path
 }
 
 // Snapshot is one snapshot row.
@@ -139,6 +147,35 @@ func run(cmd *exec.Cmd) (string, error) {
 	return out.String(), nil
 }
 
+// dsColumns is what every dataset lister asks zfs for. It is one constant
+// because there were three identical copies of this split, and a new column
+// would have been added to whichever one I happened to be looking at.
+const dsColumns = "name,used,refer,type,canmount,mounted,mountpoint"
+
+// parseDatasetList reads `zfs list -H -p -o dsColumns` output. skip drops one
+// name (ListChildren excludes the parent it was asked about); "" keeps all.
+// A row shorter than the full column set still yields name and sizes, so an
+// older zfs degrades to the old behaviour instead of vanishing from the list.
+func parseDatasetList(out, skip string) []Dataset {
+	var rows []Dataset
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		f := strings.Split(line, "\t")
+		if len(f) < 3 || (skip != "" && f[0] == skip) {
+			continue
+		}
+		d := Dataset{Name: f[0], Used: human(f[1]), Refer: human(f[2]), Snaps: -1}
+		if len(f) >= 7 {
+			d.Type, d.CanMount, d.Mountpoint = f[3], f[4], f[6]
+			d.Mounted = f[5] == "yes"
+		}
+		rows = append(rows, d)
+	}
+	return rows
+}
+
 // ListDatasets lists all filesystems + volumes at a host — FAST (one zfs
 // call, ~100ms even on big boxes). Snapshot counts are NOT included: with
 // 12k+ snapshots, `zfs list -t snapshot` costs SECONDS of kernel time, so
@@ -146,22 +183,11 @@ func run(cmd *exec.Cmd) (string, error) {
 // Snaps == -1 means "not counted yet" — UIs hide it rather than lie with 0.
 func ListDatasets(h Host) ([]Dataset, error) {
 	out, err := run(h.command("zfs",
-		"list", "-H", "-p", "-o", "name,used,refer", "-t", "filesystem,volume"))
+		"list", "-H", "-p", "-o", dsColumns, "-t", "filesystem,volume"))
 	if err != nil {
 		return nil, err
 	}
-	var rows []Dataset
-	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
-		if line == "" {
-			continue
-		}
-		f := strings.Split(line, "\t")
-		if len(f) < 3 {
-			continue
-		}
-		rows = append(rows, Dataset{Name: f[0], Used: human(f[1]), Refer: human(f[2]), Snaps: -1})
-	}
-	return rows, nil
+	return parseDatasetList(out, ""), nil
 }
 
 // SnapshotCounts enumerates every snapshot at the host and counts per
@@ -1195,23 +1221,12 @@ func ListPools(h Host) ([]string, error) {
 // excluding the dataset itself).
 func ListChildren(h Host, dataset string) ([]Dataset, error) {
 	out, err := run(h.command("zfs",
-		"list", "-H", "-p", "-o", "name,used,refer", "-t", "filesystem,volume",
+		"list", "-H", "-p", "-o", dsColumns, "-t", "filesystem,volume",
 		"-r", "-d", "1", dataset))
 	if err != nil {
 		return nil, err
 	}
-	var rows []Dataset
-	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
-		if line == "" {
-			continue
-		}
-		f := strings.Split(line, "\t")
-		if len(f) < 3 || f[0] == dataset {
-			continue
-		}
-		rows = append(rows, Dataset{Name: f[0], Used: human(f[1]), Refer: human(f[2]), Snaps: -1})
-	}
-	return rows, nil
+	return parseDatasetList(out, dataset), nil
 }
 
 // ListSubtree lists a dataset and all its descendants — used for a scoped
@@ -1219,23 +1234,12 @@ func ListChildren(h Host, dataset string) ([]Dataset, error) {
 // their allowed dataset) still sees the target. Snapshot counts are skipped
 // (a delegated user often can't enumerate all snapshots).
 func ListSubtree(h Host, path string) ([]Dataset, error) {
-	out, err := run(h.command("zfs", "list", "-H", "-p", "-o", "name,used,refer",
+	out, err := run(h.command("zfs", "list", "-H", "-p", "-o", dsColumns,
 		"-t", "filesystem,volume", "-r", path))
 	if err != nil {
 		return nil, err
 	}
-	var rows []Dataset
-	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
-		if line == "" {
-			continue
-		}
-		f := strings.Split(line, "\t")
-		if len(f) < 3 {
-			continue
-		}
-		rows = append(rows, Dataset{Name: f[0], Used: human(f[1]), Refer: human(f[2]), Snaps: -1})
-	}
-	return rows, nil
+	return parseDatasetList(out, ""), nil
 }
 
 // shellQuote single-quotes s for safe inclusion in an `sh -c` pipeline.

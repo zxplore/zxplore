@@ -364,6 +364,7 @@ type navList struct {
 	onSecondary func(*fyne.PointEvent) // right-click → context menu
 	onTab       func()                 // Tab hops to the sibling pane
 	onHelp      func()                 // "?" opens the manual
+	onTree      func(expand bool)      // ←/→ fold and unfold a tree row
 }
 
 // keyNavSelect wires OnHighlighted so ARROW/PAGE navigation moves the
@@ -465,6 +466,12 @@ func (l *navList) TypedKey(e *fyne.KeyEvent) {
 		if l.onTab != nil {
 			l.onTab()
 		}
+	case fyne.KeyLeft, fyne.KeyRight:
+		if l.onTree != nil {
+			l.onTree(e.Name == fyne.KeyRight)
+			return
+		}
+		l.List.TypedKey(e)
 	default:
 		l.List.TypedKey(e) // native ↑/↓/Space
 	}
@@ -654,7 +661,11 @@ func runGUI() {
 	// first pixel.
 	var all []Dataset
 	var listErr error
-	var visible []Dataset // the filtered view the list renders
+	var visible []TreeRow // the rows the list draws: a tree, or flat under a filter
+	// collapsed survives a rescan, so a reload does not re-open everything the
+	// operator just folded. DefaultCollapsed seeds it on the first scan.
+	collapsed := map[string]bool{}
+	seeded := false
 
 	// Dossier: a selectable monospace Label (SetText reliably repaints and follows
 	// the theme) inside a Scroll — no RichText/scroll refresh fight.
@@ -670,6 +681,11 @@ func runGUI() {
 	}
 
 	lastShown := -1
+	// Initialised as no-ops rather than nil: the snapshot-count merge calls
+	// them from a goroutine, and a scan that finished early would otherwise
+	// deref nil. They are given their real bodies once the list exists.
+	curRow := func() string { return "" }
+	restore := func(string) {}
 	dossierGen := 0 // drops stale async renders when the selection moves on
 	setDossier := func(i int) {
 		if i == lastShown {
@@ -681,7 +697,7 @@ func runGUI() {
 			renderDossier("")
 			return
 		}
-		name := visible[i].Name
+		name := visible[i].DS.Name
 		gen := dossierGen
 		renderDossier("… " + name)
 		// Dossier makes several zfs/zpool calls (seconds over ssh) — fetch off
@@ -711,24 +727,33 @@ func runGUI() {
 		func() fyne.CanvasObject {
 			t := canvas.NewText("template", theme.Color(theme.ColorNameForeground))
 			t.TextSize = theme.TextSize()
+			// Monospace because the tree has columns now: indent, badge and
+			// size only line up in a fixed-advance font.
+			t.TextStyle = fyne.TextStyle{Monospace: true}
 			// NewPadded restores the inset a Label would have given, so the
 			// rows keep their old rhythm instead of hugging the card edge.
 			return container.NewPadded(t)
 		},
 		func(i widget.ListItemID, o fyne.CanvasObject) {
-			d := visible[i]
-			snaps := "" // counts stream in behind the fast list (Snaps<0 = not yet)
-			if d.Snaps >= 0 {
-				snaps = fmt.Sprintf("   ×%d", d.Snaps)
-			}
+			r := visible[i]
 			t := rowText(o)
-			t.Text = fmt.Sprintf("%s    %s / %s%s", d.Name, d.Used, d.Refer, snaps)
-			if int(i) == list.cursor {
+			t.Text = r.Line()
+			switch {
+			case int(i) == list.cursor:
 				t.Color = acBlue.at()
-				t.TextStyle = fyne.TextStyle{Bold: true}
-			} else {
+				t.TextStyle = fyne.TextStyle{Monospace: true, Bold: true}
+			case !r.Openable():
+				// A container or a zvol has nothing to open. Dimming it is the
+				// whole point of the tree: eleven of fiend's 28 rows are this,
+				// and the flat list drew them as bright as real data.
+				t.Color = theme.Color(theme.ColorNameDisabled)
+				t.TextStyle = fyne.TextStyle{Monospace: true}
+			case r.Kind == dsUnmounted:
+				t.Color = acRed.at()
+				t.TextStyle = fyne.TextStyle{Monospace: true}
+			default:
 				t.Color = theme.Color(theme.ColorNameForeground)
-				t.TextStyle = fyne.TextStyle{}
+				t.TextStyle = fyne.TextStyle{Monospace: true}
 			}
 			t.Refresh()
 		},
@@ -744,24 +769,90 @@ func runGUI() {
 	search.SetPlaceHolder("filter datasets…  (press / )")
 	applyFilter := func(q string) {
 		q = strings.ToLower(strings.TrimSpace(q))
-		visible = visible[:0]
-		for _, d := range all {
-			if q == "" || strings.Contains(strings.ToLower(d.Name), q) {
-				visible = append(visible, d)
+		if q == "" {
+			if !seeded && len(all) > 0 {
+				collapsed = DefaultCollapsed(all)
+				seeded = true
 			}
+			visible = BuildTree(all, collapsed)
+		} else {
+			// A filtered tree is scaffolding holding up two hits, so a filter
+			// flattens and shows full names instead.
+			var hits []Dataset
+			for _, d := range all {
+				if strings.Contains(strings.ToLower(d.Name), q) {
+					hits = append(hits, d)
+				}
+			}
+			visible = FlatRows(hits)
 		}
 		lastShown = -1
 		list.UnselectAll()
 		list.Refresh()
 		if len(visible) > 0 {
 			list.selectAt(0)
-		} else {
+		} else if q != "" {
 			renderDossier("(no datasets match \"" + q + "\")")
+		} else {
+			renderDossier("")
 		}
 	}
 	search.OnChanged = applyFilter
 	search.OnSubmitted = func(string) { w.Canvas().Focus(list) }
 	list.onFind = func() { w.Canvas().Focus(search) }
+
+	// curRow/restore keep the selection on the same DATASET across a rebuild.
+	// The rows are derived now, so folding, a rescan and the snapshot-count
+	// merge all rebuild the slice, and an index does not survive that -- fold
+	// rpool/var and the cursor would have landed on whatever slid into its row.
+	curRow = func() string {
+		if list.cursor >= 0 && list.cursor < len(visible) {
+			return visible[list.cursor].DS.Name
+		}
+		return ""
+	}
+	restore = func(name string) {
+		if name == "" {
+			return
+		}
+		for i, r := range visible {
+			if r.DS.Name == name {
+				list.selectAt(i)
+				return
+			}
+		}
+	}
+
+	// Left folds, Right unfolds, and both act on the row under the cursor. A
+	// container with children is the only row either key means anything on.
+	list.onTree = func(expand bool) {
+		name := curRow()
+		if name == "" {
+			return
+		}
+		row := visible[list.cursor]
+		if row.Kids == 0 || row.Flat {
+			// Left on a leaf jumps to its parent: that is what every file
+			// manager does, and without it a folded subtree is hard to get out
+			// of with the keyboard alone.
+			if !expand && !row.Flat {
+				if pnt, ok := parentOf(name); ok {
+					restore(pnt)
+				}
+			}
+			return
+		}
+		if expand == collapsed[name] { // only act when it changes something
+			if expand {
+				delete(collapsed, name)
+			} else {
+				collapsed[name] = true
+			}
+			applyFilter(search.Text)
+			restore(name)
+			list.Refresh()
+		}
+	}
 
 	// ZPOOLS machine overview, pinned at the top.
 	poolsLabel := widget.NewLabel("… scanning pools")
@@ -932,13 +1023,12 @@ func runGUI() {
 						all[i].Snaps = 0
 					}
 				}
-				for i := range visible {
-					if c, ok := counts[visible[i].Name]; ok {
-						visible[i].Snaps = c
-					} else {
-						visible[i].Snaps = 0
-					}
-				}
+				// Rebuild rather than patch the drawn rows: they are derived
+				// from all now, and a second copy of the merge is how the two
+				// drift apart.
+				cur := curRow()
+				applyFilter(search.Text)
+				restore(cur)
 				list.Refresh()
 			})
 		}()
@@ -1022,7 +1112,7 @@ func runGUI() {
 	editing := false
 	curName := func() string {
 		if list.cursor >= 0 && list.cursor < len(visible) {
-			return visible[list.cursor].Name
+			return visible[list.cursor].DS.Name
 		}
 		return ""
 	}
@@ -1126,7 +1216,7 @@ func runGUI() {
 		if list.cursor < 0 || list.cursor >= len(visible) {
 			return
 		}
-		m := datasetContextMenu(host, visible[list.cursor].Name, w,
+		m := datasetContextMenu(host, visible[list.cursor].DS.Name, w,
 			func() { reload() },
 			func() { editing = true; buildRight() })
 		widget.ShowPopUpMenuAtPosition(m, w.Canvas(), pos)

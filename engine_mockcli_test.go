@@ -47,18 +47,18 @@ func (m *mock) log() string {
 // rows, every other invocation (the mutations) just logs and succeeds.
 const zfsFixture = `echo "zfs $*" >> "$ZX_CMDLOG"
 case "$*" in
-"list -H -p -o name,used,refer -t filesystem,volume")
-  printf 'tank\t5368709120\t1024\ntank/data\t2147483648\t1048576\n' ;;
+"list -H -p -o name,used,refer,type,canmount,mounted,mountpoint -t filesystem,volume")
+  printf 'tank\t5368709120\t1024\tfilesystem\ton\tyes\t/tank\ntank/data\t2147483648\t1048576\tfilesystem\ton\tyes\t/tank/data\n' ;;
 "list -H -o name -t snapshot")
   printf 'tank/data@a\ntank/data@b\ntank@x\nnot-a-snapshot\n' ;;
 "list -H -o name,used,creation -s creation -t snapshot -r -d 1 tank/data")
   printf 'tank/data@a\t0\tMon Jul 20  9:00 2026\ntank/data@b\t8192\tTue Jul 21  9:00 2026\n' ;;
 "list -H -o name,used,creation -s creation -t snapshot -r -d 1 backup/data")
   printf 'backup/data@a\t0\tMon Jul 20  9:05 2026\n' ;;
-"list -H -p -o name,used,refer -t filesystem,volume -r -d 1 tank")
-  printf 'tank\t5368709120\t1024\ntank/data\t2147483648\t1048576\n' ;;
-"list -H -p -o name,used,refer -t filesystem,volume -r tank/data")
-  printf 'tank/data\t2147483648\t1048576\ntank/data/inner\t1024\t512\n' ;;
+"list -H -p -o name,used,refer,type,canmount,mounted,mountpoint -t filesystem,volume -r -d 1 tank")
+  printf 'tank\t5368709120\t1024\tfilesystem\ton\tyes\t/tank\ntank/data\t2147483648\t1048576\tfilesystem\ton\tyes\t/tank/data\n' ;;
+"list -H -p -o name,used,refer,type,canmount,mounted,mountpoint -t filesystem,volume -r tank/data")
+  printf 'tank/data\t2147483648\t1048576\tfilesystem\ton\tyes\t/tank/data\ntank/data/inner\t1024\t512\tfilesystem\ton\tyes\t/tank/data/inner\n' ;;
 "list -H -t bookmark -o name,creation -s creation -r -d 1 tank/data")
   printf 'tank/data#keep\tSun Jul 19  9:00 2026\n' ;;
 "list -H -o name,mountpoint,mounted -r rpool")
