@@ -349,6 +349,59 @@ func card(content fyne.CanvasObject) fyne.CanvasObject {
 	return container.NewStack(r, container.NewPadded(content))
 }
 
+// ── dsRow ───────────────────────────────────────────────────────────────────
+// dsRow is one Browser row. It is a widget rather than a bare canvas.Text for
+// one reason: it knows its own index, so a single click selects it and a DOUBLE
+// click folds it.
+//
+// Folding was ←/→ only, which is not a gesture anyone discovers by clicking --
+// "oh so you can t click the mouse on them?" (2026-09-12). Splitting the twisty
+// into its own tappable column was the other option and it loses the monospace
+// alignment the columns depend on, because a widget's width in pixels does not
+// land on a character boundary at four different indents. Double-click is also
+// what a folder answers to everywhere else.
+//
+// The text stays a canvas.Text so the selected row can be coloured on its own;
+// a Label takes the theme foreground and every row gets it.
+type dsRow struct {
+	widget.BaseWidget
+	txt    *canvas.Text
+	idx    int
+	onTap  func(int)
+	onFold func(int)
+}
+
+func newDSRow() *dsRow {
+	r := &dsRow{txt: canvas.NewText("template", theme.Color(theme.ColorNameForeground))}
+	r.txt.TextSize = theme.TextSize()
+	// Monospace because the tree has columns: indent, badge and size only line
+	// up in a fixed-advance font.
+	r.txt.TextStyle = fyne.TextStyle{Monospace: true}
+	r.ExtendBaseWidget(r)
+	return r
+}
+
+// CreateRenderer keeps the padding a Label would have given, so the rows hold
+// their old rhythm instead of hugging the card edge.
+func (r *dsRow) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(container.NewPadded(r.txt))
+}
+
+func (r *dsRow) Tapped(*fyne.PointEvent) {
+	if r.onTap != nil {
+		r.onTap(r.idx)
+	}
+}
+
+// DoubleTapped folds or unfolds. Fyne delivers Tapped first, so the row is
+// already selected by the time this runs, which is what an operator expects:
+// the thing you folded is the thing you are looking at.
+func (r *dsRow) DoubleTapped(*fyne.PointEvent) {
+	if r.onFold != nil {
+		r.onFold(r.idx)
+	}
+}
+
 // ── navList ──────────────────────────────────────────────────────────────────
 // navList extends widget.List with the keys Fyne's List omits: PgUp/PgDn and
 // Home/End (they MOVE the selection, firing OnSelected → dossier) plus "/" to
@@ -740,24 +793,26 @@ func runGUI() {
 	// It is the same blue vmxplore and wgxplore use, so the three consoles
 	// agree on what "this is the one you are working on" looks like.
 	var list *navList
-	rowText := func(o fyne.CanvasObject) *canvas.Text {
-		return o.(*fyne.Container).Objects[0].(*canvas.Text)
-	}
+	var foldAt func(int) // assigned once collapsed/applyFilter exist, below
 	list = newNavList(
 		func() int { return len(visible) },
 		func() fyne.CanvasObject {
-			t := canvas.NewText("template", theme.Color(theme.ColorNameForeground))
-			t.TextSize = theme.TextSize()
-			// Monospace because the tree has columns now: indent, badge and
-			// size only line up in a fixed-advance font.
-			t.TextStyle = fyne.TextStyle{Monospace: true}
-			// NewPadded restores the inset a Label would have given, so the
-			// rows keep their old rhythm instead of hugging the card edge.
-			return container.NewPadded(t)
+			row := newDSRow()
+			// The row consumes the tap, so it has to do the selecting the
+			// List's own wrapper would otherwise have done.
+			row.onTap = func(i int) { list.selectAt(i) }
+			row.onFold = func(i int) {
+				if foldAt != nil {
+					foldAt(i)
+				}
+			}
+			return row
 		},
 		func(i widget.ListItemID, o fyne.CanvasObject) {
 			r := visible[i]
-			t := rowText(o)
+			row := o.(*dsRow)
+			row.idx = int(i)
+			t := row.txt
 			t.Text = r.Line()
 			switch {
 			case int(i) == list.cursor:
@@ -787,7 +842,7 @@ func runGUI() {
 	// Find: "/" focuses this entry; typing filters the list live; Enter returns
 	// focus to the list. Substring match on the dataset name (case-insensitive).
 	search := widget.NewEntry()
-	search.SetPlaceHolder("filter datasets…  ( / to search · ← → fold)")
+	search.SetPlaceHolder("filter datasets…  ( / search · double-click or ← → folds)")
 	applyFilter := func(q string) {
 		q = strings.ToLower(strings.TrimSpace(q))
 		if q == "" {
@@ -844,35 +899,56 @@ func runGUI() {
 		}
 	}
 
-	// Left folds, Right unfolds, and both act on the row under the cursor. A
-	// container with children is the only row either key means anything on.
+	// setFold folds or unfolds ONE row and keeps the selection on it. The rows
+	// are derived, so every fold rebuilds the slice, and restore is what stops
+	// the cursor landing on whatever slid into that position.
+	setFold := func(i int, expand bool) {
+		if i < 0 || i >= len(visible) {
+			return
+		}
+		row := visible[i]
+		if row.Kids == 0 || row.Flat {
+			return
+		}
+		if expand != collapsed[row.DS.Name] { // already in that state
+			return
+		}
+		if expand {
+			delete(collapsed, row.DS.Name)
+		} else {
+			collapsed[row.DS.Name] = true
+		}
+		applyFilter(search.Text)
+		restore(row.DS.Name)
+		list.Refresh()
+	}
+
+	// foldAt is the MOUSE path: a double-click on a row, whichever way it is
+	// currently folded. Assigned here rather than in the row factory because it
+	// needs collapsed and applyFilter, which do not exist that early.
+	foldAt = func(i int) {
+		if i < 0 || i >= len(visible) {
+			return
+		}
+		setFold(i, !visible[i].Expanded)
+	}
+
+	// Left folds, Right unfolds, and both act on the row under the cursor.
 	list.onTree = func(expand bool) {
-		name := curRow()
-		if name == "" {
+		if list.cursor < 0 || list.cursor >= len(visible) {
 			return
 		}
 		row := visible[list.cursor]
-		if row.Kids == 0 || row.Flat {
+		if row.Kids == 0 && !expand && !row.Flat {
 			// Left on a leaf jumps to its parent: that is what every file
 			// manager does, and without it a folded subtree is hard to get out
 			// of with the keyboard alone.
-			if !expand && !row.Flat {
-				if pnt, ok := parentOf(name); ok {
-					restore(pnt)
-				}
+			if par, ok := parentOf(row.DS.Name); ok {
+				restore(par)
 			}
 			return
 		}
-		if expand == collapsed[name] { // only act when it changes something
-			if expand {
-				delete(collapsed, name)
-			} else {
-				collapsed[name] = true
-			}
-			applyFilter(search.Text)
-			restore(name)
-			list.Refresh()
-		}
+		setFold(list.cursor, expand)
 	}
 
 	// ZPOOLS machine overview, pinned at the top.

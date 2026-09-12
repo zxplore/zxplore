@@ -114,3 +114,37 @@ func TestRefocusAfterTap(t *testing.T) {
 		t.Errorf("focus was stolen from the filter entry, now %T", w.Canvas().Focused())
 	}
 }
+
+// TestDSRowTapAndDoubleTap covers the row widget's wiring: a single tap has to
+// select, because the row consumes the tap the List's own wrapper would have
+// handled, and a double tap has to fold. Folding used to be ←/→ only, which is
+// not a gesture anyone finds with a mouse.
+func TestDSRowTapAndDoubleTap(t *testing.T) {
+	test.NewApp()
+	row := newDSRow()
+	row.idx = 7
+	var tapped, folded []int
+	row.onTap = func(i int) { tapped = append(tapped, i) }
+	row.onFold = func(i int) { folded = append(folded, i) }
+
+	row.Tapped(nil)
+	row.DoubleTapped(nil)
+
+	if len(tapped) != 1 || tapped[0] != 7 {
+		t.Errorf("a tap must select the row it is on, got %v", tapped)
+	}
+	if len(folded) != 1 || folded[0] != 7 {
+		t.Errorf("a double tap must fold the row it is on, got %v", folded)
+	}
+
+	// A row with nothing wired must not panic: the list rebuilds rows, and the
+	// fold callback is assigned later than the row factory.
+	bare := newDSRow()
+	bare.Tapped(nil)
+	bare.DoubleTapped(nil)
+
+	// The renderer must exist, or the row never draws.
+	if r := newDSRow().CreateRenderer(); r == nil {
+		t.Error("dsRow has no renderer")
+	}
+}
