@@ -138,11 +138,17 @@ func BuildTree(rows []Dataset, collapsed map[string]bool) []TreeRow {
 	return out
 }
 
-// DefaultCollapsed folds the scaffolding and nothing else: a container that is
-// not a pool root and has children. On fiend that is ROOT, kldload, usr, var
-// and vms — 15 rows of the 28 gone, with every pool and every mounted
-// filesystem still on screen. Data is never folded away, so nothing an
-// operator put there can hide.
+// DefaultCollapsed folds scaffolding whose children are ordinary: a container
+// that is not a pool root, has children, and holds no zvol or boot environment
+// directly beneath it. On fiend that is kldload, usr and var.
+//
+// The zvol/BE exception is the whole point. The first cut folded every container
+// with children, which put rpool/ROOT and rpool/vms away — and rpool/vms is
+// where the goldens and the VM disks live, so on a virtualisation host the
+// default view hid the most interesting objects on the machine behind one
+// unlabelled fold. Reported minutes after I shipped it: "in zxplore i dont see
+// any of the golden imange and vms" (2026-09-12). A container holding
+// scaffolding folds; a container holding what you came to look at does not.
 func DefaultCollapsed(rows []Dataset) map[string]bool {
 	hasKids := map[string]bool{}
 	present := map[string]bool{}
@@ -154,9 +160,19 @@ func DefaultCollapsed(rows []Dataset) map[string]bool {
 			hasKids[p] = true
 		}
 	}
+	// Which containers hold something worth seeing without a keypress.
+	interesting := map[string]bool{}
+	for _, d := range rows {
+		if k := classify(d); k == dsVolume || k == dsBootEnv {
+			if par, ok := parentOf(d.Name); ok {
+				interesting[par] = true
+			}
+		}
+	}
 	out := map[string]bool{}
 	for _, d := range rows {
-		if _, nested := parentOf(d.Name); nested && hasKids[d.Name] && classify(d) == dsContainer {
+		_, nested := parentOf(d.Name)
+		if nested && hasKids[d.Name] && classify(d) == dsContainer && !interesting[d.Name] {
 			out[d.Name] = true
 		}
 	}
