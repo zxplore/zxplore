@@ -138,17 +138,22 @@ func BuildTree(rows []Dataset, collapsed map[string]bool) []TreeRow {
 	return out
 }
 
-// DefaultCollapsed folds scaffolding whose children are ordinary: a container
-// that is not a pool root, has children, and holds no zvol or boot environment
-// directly beneath it. On fiend that is kldload, usr and var.
+// DefaultCollapsed folds every container that has children and is not a pool
+// root. On fiend that is ROOT, kldload, usr, var and vms: 13 rows of the 28, a
+// starting view rather than a wall.
 //
-// The zvol/BE exception is the whole point. The first cut folded every container
-// with children, which put rpool/ROOT and rpool/vms away — and rpool/vms is
-// where the goldens and the VM disks live, so on a virtualisation host the
-// default view hid the most interesting objects on the machine behind one
-// unlabelled fold. Reported minutes after I shipped it: "in zxplore i dont see
-// any of the golden imange and vms" (2026-09-12). A container holding
-// scaffolding folds; a container holding what you came to look at does not.
+// This rule went out, came back and went out again in one afternoon, and the
+// round trip is the point. Folded first; the operator could not see the
+// goldens, because rpool/vms holds them and folding was ←/→ only with the keys
+// dead after any mouse click — so folded meant gone, not tucked away.
+// Unfolded, which hid the problem instead of fixing it. Then a double-click
+// fold and the focus repair, and with a way OUT of a fold the fold is right
+// again: "should probally start with the tree not fully expanded but a good
+// starting view ie collapse vms and such for sure" (2026-09-12).
+//
+// So: a default view is only allowed to hide what the operator can get back in
+// one gesture. Data is never folded away — only containers, which hold nothing
+// themselves.
 func DefaultCollapsed(rows []Dataset) map[string]bool {
 	hasKids := map[string]bool{}
 	present := map[string]bool{}
@@ -160,19 +165,9 @@ func DefaultCollapsed(rows []Dataset) map[string]bool {
 			hasKids[p] = true
 		}
 	}
-	// Which containers hold something worth seeing without a keypress.
-	interesting := map[string]bool{}
-	for _, d := range rows {
-		if k := classify(d); k == dsVolume || k == dsBootEnv {
-			if par, ok := parentOf(d.Name); ok {
-				interesting[par] = true
-			}
-		}
-	}
 	out := map[string]bool{}
 	for _, d := range rows {
-		_, nested := parentOf(d.Name)
-		if nested && hasKids[d.Name] && classify(d) == dsContainer && !interesting[d.Name] {
+		if _, nested := parentOf(d.Name); nested && hasKids[d.Name] && classify(d) == dsContainer {
 			out[d.Name] = true
 		}
 	}

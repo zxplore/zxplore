@@ -152,7 +152,7 @@ func TestBuildTreeDepthAndOrder(t *testing.T) {
 func TestDefaultCollapsedFoldsOnlyScaffolding(t *testing.T) {
 	rows := parseDatasetList(fiendList, "")
 	collapsed := DefaultCollapsed(rows)
-	wantFolded := []string{"rpool/kldload", "rpool/usr", "rpool/var"}
+	wantFolded := []string{"rpool/ROOT", "rpool/kldload", "rpool/usr", "rpool/var", "rpool/vms"}
 	for _, n := range wantFolded {
 		if !collapsed[n] {
 			t.Errorf("%s should start folded: it is a container with children", n)
@@ -161,17 +161,15 @@ func TestDefaultCollapsedFoldsOnlyScaffolding(t *testing.T) {
 	if len(collapsed) != len(wantFolded) {
 		t.Errorf("folded %d datasets (%v), want exactly %v", len(collapsed), collapsed, wantFolded)
 	}
-	// A pool is never folded, nor anything with files in it, nor -- the point of
-	// the rule -- a container holding zvols or boot environments.
-	for _, n := range []string{"rpool", "void", "rpool/home", "rpool/ROOT/fiend", "rpool/opt",
-		"rpool/ROOT", "rpool/vms"} {
+	// A pool is never folded, and neither is anything with files in it.
+	for _, n := range []string{"rpool", "void", "rpool/home", "rpool/opt"} {
 		if collapsed[n] {
 			t.Errorf("%s must not start folded", n)
 		}
 	}
 	tree := BuildTree(rows, collapsed)
-	if len(tree) != 19 {
-		t.Errorf("the default view is %d rows, want 19 (from 28)", len(tree))
+	if len(tree) != 13 {
+		t.Errorf("the default view is %d rows, want 13 (from 28)", len(tree))
 		for _, r := range tree {
 			t.Logf("  %s", r.Line())
 		}
@@ -183,10 +181,7 @@ func TestDefaultCollapsedFoldsOnlyScaffolding(t *testing.T) {
 		shown[r.DS.Name] = true
 	}
 	for _, n := range []string{"rpool", "void", "rpool/home", "rpool/home/admin", "rpool/opt",
-		"rpool/root", "rpool/srv", "rpool/tmp",
-		// The regression: the goldens and the VM disks must be on screen.
-		"rpool/vms/k8s-golden", "rpool/vms/kldload-cp", "rpool/vms/kldload-cp-2",
-		"rpool/vms/kldload-cp-3", "rpool/ROOT/fiend"} {
+		"rpool/root", "rpool/srv", "rpool/tmp"} {
 		if !shown[n] {
 			t.Errorf("%s is hidden in the default view", n)
 		}
@@ -220,20 +215,27 @@ func TestTreeLineLayout(t *testing.T) {
 	if b := byName["rpool/ROOT"].Badge(); b != "container" {
 		t.Errorf("rpool/ROOT badge %q, want container", b)
 	}
-	// rpool/var folds by default; rpool/ROOT does not, because it holds BEs.
-	if !strings.Contains(byName["rpool/var"].Line(), "(5)") {
-		t.Errorf("a folded row must say how many children it hides: %q", byName["rpool/var"].Line())
-	}
-	if m := byName["rpool/var"].marker(); m != "▸ " {
-		t.Errorf("folded marker %q", m)
-	}
-	for _, n := range []string{"rpool/home", "rpool/ROOT", "rpool/vms"} {
-		if m := byName[n].marker(); m != "▾ " {
-			t.Errorf("%s expanded marker %q", n, m)
+	// Every folded row must say how many children it hides: with the subtree
+	// gone, that count is the only thing telling an operator to look inside.
+	for n, kids := range map[string]string{
+		"rpool/var": "(5)", "rpool/vms": "(4)", "rpool/ROOT": "(2)", "rpool/kldload": "(3)",
+	} {
+		if !strings.Contains(byName[n].Line(), kids) {
+			t.Errorf("%s hides its children without saying so: %q", n, byName[n].Line())
+		}
+		if m := byName[n].marker(); m != "▸ " {
+			t.Errorf("%s folded marker %q", n, m)
 		}
 	}
-	// The goldens must carry a badge that says they are block devices.
-	if b := byName["rpool/vms/k8s-golden"].Badge(); b != "ZVOL" {
+	if m := byName["rpool/home"].marker(); m != "▾ " {
+		t.Errorf("expanded marker %q", m)
+	}
+	// And the goldens still classify as block devices once unfolded.
+	full := map[string]TreeRow{}
+	for _, r := range BuildTree(rows, nil) {
+		full[r.DS.Name] = r
+	}
+	if b := full["rpool/vms/k8s-golden"].Badge(); b != "ZVOL" {
 		t.Errorf("k8s-golden badge %q, want ZVOL", b)
 	}
 	if m := byName["rpool/opt"].marker(); m != "  " {
