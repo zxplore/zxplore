@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -78,5 +81,36 @@ func TestDossierSegments(t *testing.T) {
 	}
 	if !topic || !plain {
 		t.Errorf("topic colored=%v plain preserved=%v", topic, plain)
+	}
+}
+
+// TestRefocusAfterTap covers the guard on the focus restore. The restore exists
+// because Fyne unfocuses when a non-focusable object is tapped, and a list row
+// is not focusable, so one click on a dataset killed every key on the list --
+// including the ←/→ that fold the tree. The guard exists because a selection
+// also fires while the operator is typing in the filter box.
+func TestRefocusAfterTap(t *testing.T) {
+	test.NewApp()
+	w := test.NewWindow(nil)
+	defer w.Close()
+
+	entry := widget.NewEntry()
+	list := newNavList(func() int { return 3 },
+		func() fyne.CanvasObject { return widget.NewLabel("x") },
+		func(widget.ListItemID, fyne.CanvasObject) {})
+	w.SetContent(container.NewVBox(entry, list))
+
+	// Nothing focused: the list takes focus, which is the post-tap case.
+	w.Canvas().Unfocus()
+	refocusAfterTap(w.Canvas(), list)
+	if w.Canvas().Focused() != fyne.Focusable(list) {
+		t.Errorf("after a tap the list must hold focus, got %T", w.Canvas().Focused())
+	}
+
+	// Typing in the filter box: focus must NOT be stolen.
+	w.Canvas().Focus(entry)
+	refocusAfterTap(w.Canvas(), list)
+	if w.Canvas().Focused() != fyne.Focusable(entry) {
+		t.Errorf("focus was stolen from the filter entry, now %T", w.Canvas().Focused())
 	}
 }

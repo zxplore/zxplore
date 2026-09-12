@@ -556,6 +556,27 @@ func manualSegments(text string) []widget.RichTextSegment {
 // guiRW gates every mutation. The toolbar lock button flips it; default OFF.
 var guiRW = false
 
+// refocusAfterTap puts keyboard focus back on a list after one of its rows was
+// tapped.
+//
+// Fyne unfocuses the canvas whenever something non-focusable is tapped, and a
+// list ROW is not focusable -- so clicking a dataset silently killed every key
+// binding on the list: arrows, PgUp/PgDn, Home/End, Enter. It was survivable
+// while the mouse could do everything, because hover follows the pointer. The
+// tree made it fatal: the only way to fold is a key, so "I cant collapose or
+// expand things" and "the pigination and awwors down wor" are one bug
+// (2026-09-12).
+//
+// The guard matters as much as the focus: a selection also happens while the
+// operator is TYPING in the filter box, and grabbing focus there would eat
+// every second character.
+func refocusAfterTap(c fyne.Canvas, l fyne.Focusable) {
+	if _, typing := c.Focused().(*widget.Entry); typing {
+		return
+	}
+	c.Focus(l)
+}
+
 // guiMutOK is checked at the top of every mutation path: in read-only mode it
 // explains and refuses. One chokepoint per surface, same policy as the TUI.
 func guiMutOK(w fyne.Window) bool {
@@ -766,7 +787,7 @@ func runGUI() {
 	// Find: "/" focuses this entry; typing filters the list live; Enter returns
 	// focus to the list. Substring match on the dataset name (case-insensitive).
 	search := widget.NewEntry()
-	search.SetPlaceHolder("filter datasets…  (press / )")
+	search.SetPlaceHolder("filter datasets…  ( / to search · ← → fold)")
 	applyFilter := func(q string) {
 		q = strings.ToLower(strings.TrimSpace(q))
 		if q == "" {
@@ -1207,6 +1228,7 @@ func runGUI() {
 		} else {
 			setDossier(int(i))
 		}
+		refocusAfterTap(w.Canvas(), list)
 	}
 	// Right-click a dataset → the full lifecycle menu (snapshot / clone /
 	// replicate / boot-env / rollback / edit / destroy), acting on that row.
