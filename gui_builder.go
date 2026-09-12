@@ -405,19 +405,24 @@ func newBuilderUI(w fyne.Window, switchTab func(fyne.KeyName), onPoolCreated fun
 			dialog.ShowError(err, w)
 			return
 		}
-		detail := d.Command() + "\n\n" + fmt.Sprintf("usable ≈ %s of %s raw", fmtBytesDec(d.Usable()), fmtBytesDec(d.Raw()))
-		if ws := d.Warnings(); len(ws) > 0 {
-			detail += "\n\n! " + strings.Join(ws, "\n! ")
-		}
-		confirmTyped(w, "Create pool "+d.Name, detail, d.Name, func() {
+		// HISTORY: this used confirmTyped, the retype-the-target-name gate the
+		// destroy verbs use. On a CREATE the target does not exist yet, so the
+		// only dialog mentioning a pool name was demanding the DEFAULT name
+		// back: type what you actually wanted the pool called and it answered
+		// `name mismatch — expected "tank"`, with no way forward (fiend,
+		// 2026-09-12, five 8TB disks sat unpooled). Naming and acknowledging
+		// are two questions, so they get two fields.
+		confirmCreate(w, d, func(final Design) {
+			b.design.Name = final.Name
+			name.SetText(final.Name)
 			go func() {
-				err := CreatePool(b.host, d)
+				err := CreatePool(b.host, final)
 				fyne.Do(func() {
 					if err != nil {
 						showMono(w, "zpool create failed", err.Error())
 						return
 					}
-					b.status = "✓ pool " + d.Name + " created"
+					b.status = "✓ pool " + final.Name + " created"
 					b.design.Vdevs = nil
 					b.chosen = map[string]bool{}
 					rescan()
@@ -641,4 +646,97 @@ func roleAccentFor(n *TopoNode) accentPair {
 		return acRed
 	}
 	return acTopic
+}
+
+// ─── the create gate ────────────────────────────────────────────────────────
+// Creating a pool is two decisions an operator makes at once: what it is
+// called, and the fact that every member disk is about to be overwritten.
+// confirmTyped can only ask the second one, and it asks it by demanding a name
+// that does not exist yet, which is how the name prompt came to reject every
+// name (see the call site). So the create path gets its own dialog.
+
+// confirmCreate asks for the pool name, shows the exact zpool line and the
+// disks it consumes, and gates on a fixed acknowledgement word. onOK runs only
+// if the name validates AND the acknowledgement matches; it receives the design
+// with the name as finally typed, so the caller never has to re-read a widget.
+func confirmCreate(w fyne.Window, d Design, onOK func(Design)) {
+	const ack = createAck
+
+	nameEnt := widget.NewEntry()
+	nameEnt.SetText(d.Name)
+	ackEnt := widget.NewEntry()
+	ackEnt.SetPlaceHolder(ack)
+
+	cmd := widget.NewLabel(d.Command())
+	cmd.TextStyle = fyne.TextStyle{Monospace: true}
+	cmd.Wrapping = fyne.TextWrapWord
+
+	// Every disk in the design, not just the data vdevs: a cache or log member
+	// is overwritten exactly as thoroughly as a raidz member.
+	var disks []string
+	for _, v := range d.Vdevs {
+		for _, disk := range v.Disks {
+			disks = append(disks, fmt.Sprintf("  %-10s %8s  %s", disk.Name, disk.Size(), disk.Model))
+		}
+	}
+	diskLbl := widget.NewLabel(strings.Join(disks, "\n"))
+	diskLbl.TextStyle = fyne.TextStyle{Monospace: true}
+
+	body := container.NewVBox(
+		widget.NewLabel("Pool name:"),
+		nameEnt,
+		widget.NewLabel(fmt.Sprintf("usable ≈ %s of %s raw", fmtBytesDec(d.Usable()), fmtBytesDec(d.Raw()))),
+		cmd,
+	)
+	if ws := d.Warnings(); len(ws) > 0 {
+		warn := widget.NewLabel("! " + strings.Join(ws, "\n! "))
+		warn.Wrapping = fyne.TextWrapWord
+		body.Add(warn)
+	}
+	body.Add(widget.NewLabel(fmt.Sprintf("This ERASES %d disk(s) and everything on them:", len(disks))))
+	body.Add(diskLbl)
+	body.Add(widget.NewLabel("Type  " + ack + "  to confirm:"))
+	body.Add(ackEnt)
+
+	dlg := dialog.NewCustomConfirm("Create pool", "Create", "Cancel",
+		container.NewVScroll(body), func(ok bool) {
+			if !ok {
+				return
+			}
+			final, err := createGate(d, nameEnt.Text, ackEnt.Text)
+			if err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			onOK(final)
+		}, w)
+	dlg.Resize(fyne.NewSize(640, 560))
+	dlg.Show()
+	w.Canvas().Focus(nameEnt)
+}
+
+// createAck is the word the create gate wants typed back. It is deliberately
+// not the pool name: the gate that asks for a name back belongs to the destroy
+// verbs, where the name already exists.
+const createAck = "ERASE"
+
+// createGate is the create dialog's decision, with no widgets in it: given the
+// design, the name as typed and the acknowledgement as typed, it returns the
+// design to build or the error to show. Nothing is created on an error.
+func createGate(d Design, typedName, typedAck string) (Design, error) {
+	final := d
+	final.Name = strings.TrimSpace(typedName)
+	// Validate again: the name is editable in the dialog, so this is the last
+	// place a bad one can be caught before zpool sees it.
+	if err := final.Validate(); err != nil {
+		return final, err
+	}
+	if strings.TrimSpace(typedAck) != createAck {
+		n := 0
+		for _, v := range d.Vdevs {
+			n += len(v.Disks)
+		}
+		return final, fmt.Errorf("type %s to confirm that %d disk(s) will be erased", createAck, n)
+	}
+	return final, nil
 }
