@@ -50,7 +50,11 @@ Two surfaces share one engine:
 .Bl -tag -width "zxplore --tui"
 .It Nm
 the native GUI (keyboard and mouse, right-click menus).
-In the static terminal-only build this starts the TUI instead.
+With neither
+.Ev DISPLAY
+nor
+.Ev WAYLAND_DISPLAY
+set, and in the static terminal-only build, this starts the TUI instead.
 .It Nm Fl -tui
 the terminal UI, for headless hosts and SSH sessions.
 .El

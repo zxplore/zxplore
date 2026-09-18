@@ -44,7 +44,7 @@ func main() {
 			return
 		case "--help", "-h":
 			fmt.Print("usage: zxplore [--tui] [--builder cmd] [--observe [pool] [cmd]] [--containers [cmd]] [--sync-run job] [--version]\n\n" +
-				"  (no flags)   native GUI (static builds start the TUI)\n" +
+				"  (no flags)   native GUI; the TUI when there is no display, or in the static build\n" +
 				"  --tui        terminal UI — headless / SSH\n" +
 				"  --version    print version and exit\n\n" +
 				"CONTAINERS — the estate on ZFS, from a terminal\n" +
@@ -121,6 +121,17 @@ func main() {
 			elevate()
 			os.Exit(runContainersCLI(os.Args[2:]))
 		}
+	}
+	// No display to open a window on: the TUI, not a GLFW panic. The gui build
+	// used to go straight to runGUI() and die with "NotInitialized: The GLFW
+	// library is not initialized" and a Go stack trace -- the first thing
+	// anyone saw typing `zxplore` on a headless storage install, over ssh or
+	// at the console (fiend, 2026-09-18). The static build already did this.
+	if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+		fmt.Fprintln(os.Stderr, "zxplore: no DISPLAY or WAYLAND_DISPLAY -- starting the TUI")
+		elevate() // same as --tui: root inherits the tty
+		runTUI()
+		return
 	}
 	// GUI: do NOT sudo-reexec — root can't reach the user's Wayland/X display.
 	// Privileged ZFS ops elevate per-command (pkexec local, delegated ssh remote).
