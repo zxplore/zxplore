@@ -663,7 +663,12 @@ func (m model) global(k string) (model, tea.Cmd, bool) {
 		m.pv = newPoolsView(m.host)
 		m.mode = modePools
 		return m, nil, true
-	case "f5":
+	case "f6":
+		// F6, not F5: global() runs before the focused view's own handler, so a
+		// global F5 silently shadowed the commander's copy/replicate key
+		// (transfer.go) -- F5 is Norton Commander muscle memory for copy and it
+		// started jumping to a different view mid-transfer instead. Shipped in
+		// c61a803, caught before anyone hit it.
 		m.sv = newSharesView(m.host)
 		m.mode = modeShares
 		return m, nil, true
