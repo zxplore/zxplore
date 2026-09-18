@@ -362,7 +362,7 @@ const tuiHelp = `  BROWSER (F1)
     x  or F3        file explorer on the dataset
     s               snapshot now            b   bookmark location
     c               connect a host          r   reload
-    F2 transfer   F4 pools   :  command bar   ?  this help   q quit
+    F2 transfer   F4 pools   F5 shares   :  command bar   ?  help   q quit
 
   EXPLORER
     ↑/↓ j/k   move        ↵ / l    enter dir · pick file    h/bksp  up dir
@@ -374,8 +374,16 @@ const tuiHelp = `  BROWSER (F1)
     ↵ / d     drill-down dossier (vitals · zfs-vs-df space · vdevs · iostat)
     s scrub   S stop   t trim   c clear errors   i scan for importable
 
+    SHARES (F5)
+      what this host serves — NFS exports, SMB shares, iSCSI backstores —
+      each joined to the DATASET behind it by longest mountpoint match.
+      ↵ / d     full record for one share      g   jump to its dataset
+      r         reload
+      The daemon state sits above the list: a configured export whose
+      server is not running reads correct everywhere and serves nothing.
+
   COMMANDS  (:)
-    :browse :transfer :pools :explore [ds] :connect user@host:pool
+    :browse :transfer :pools :shares :explore [ds] :connect user@host:pool
     :importpool <name>   :ro / :rw   read-only ⇄ read-write   :q quit
 
   SAFETY — read-only by default: every mutation needs :rw first (footer

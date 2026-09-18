@@ -6,6 +6,7 @@
 //	transfer (F2)  dual-pane commander (local/remote replication)
 //	explorer (F3)  files across snapshots + restore (tui_explorer.go)
 //	pools (F4)     pools + drill-down dossier (tui_pools.go)
+//	shares (F5)    NFS/SMB/iSCSI exports joined to their dataset (tui_shares.go)
 //
 // Overlays: ":" command bar, "?" help, prompts (y/n, typed-name confirm,
 // text input), snapshot action menu, shared pager (tui_overlays.go).
@@ -38,6 +39,11 @@ var (
 	cursorStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#0b1220")).Background(lipgloss.Color("#5ab0ff"))
 	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	okStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#4cb98a"))
+	// alertStyle is for a state the operator has to act on, as opposed to
+	// dimStyle's "this is merely absent". The shares view uses it for a
+	// configured export whose daemon is dead: everything reads correct and
+	// nothing is served.
+	alertStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#e5484d"))
 )
 
 type uiMode int
@@ -49,6 +55,7 @@ const (
 	modeTransfer
 	modeExplorer
 	modePools
+	modeShares
 )
 
 type model struct {
@@ -86,6 +93,7 @@ type model struct {
 	sm         *snapMenu
 	exp        *explorer
 	pv         *poolsView
+	sv         *sharesView
 	pg         *pager
 	pe         *propEditor // right-pane property editor (Tab in browse)
 	pk         *picker     // enum/bool value picker (the TUI dropdown)
@@ -617,6 +625,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateExplorer(msg)
 		case modePools:
 			return m.updatePools(msg)
+		case modeShares:
+			return m.updateShares(msg)
 		default:
 			return m.updateBrowse(msg)
 		}
@@ -652,6 +662,10 @@ func (m model) global(k string) (model, tea.Cmd, bool) {
 	case "f4":
 		m.pv = newPoolsView(m.host)
 		m.mode = modePools
+		return m, nil, true
+	case "f5":
+		m.sv = newSharesView(m.host)
+		m.mode = modeShares
 		return m, nil, true
 	}
 	return m, nil, false
@@ -1005,6 +1019,9 @@ func (m model) runCommand(s string) (tea.Model, tea.Cmd) {
 	case "pools":
 		m.pv = newPoolsView(m.host)
 		m.mode = modePools
+	case "shares":
+		m.sv = newSharesView(m.host)
+		m.mode = modeShares
 	case "explore":
 		ds := arg
 		if ds == "" {
@@ -1388,6 +1405,53 @@ func (m model) updatePools(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// updateShares drives the shares view. Read-only: every key here either moves
+// the cursor, opens a detail pager, or reloads. There is deliberately no verb
+// that creates or removes an export -- that changes what the machine lets
+// strangers reach and belongs behind :rw with a typed confirmation, like the
+// destructive dataset verbs.
+func (m model) updateShares(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if mm, cmd, ok := m.global(msg.String()); ok {
+		return mm, cmd
+	}
+	v := m.sv
+	if v == nil {
+		m.mode = modeBrowse
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc", "q":
+		m.mode = modeBrowse
+	case "down", "j":
+		if v.cursor < len(v.shares)-1 {
+			v.cursor++
+		}
+	case "up", "k":
+		if v.cursor > 0 {
+			v.cursor--
+		}
+	case "enter", "d":
+		if sh, ok := v.current(); ok {
+			m.pg = newPager("share — "+sh.Kind+" "+sh.Name, v.detail(sh))
+		}
+	case "g":
+		// Jump to the dataset behind this share. The whole reason the join
+		// exists: seeing an export and wanting its dataset's snapshots.
+		if sh, ok := v.current(); ok && sh.Dataset != "" {
+			m.mode = modeBrowse
+			for i, d := range m.datasets {
+				if d.Name == sh.Dataset {
+					m.cursor = i
+					break
+				}
+			}
+		}
+	case "r":
+		v.reload()
+	}
+	return m, nil
+}
+
 func (m model) updatePager(msg tea.KeyMsg) model {
 	page := m.height - 6
 	if page < 4 {
@@ -1531,6 +1595,8 @@ func (m model) View() string {
 		base = m.viewExplorer()
 	case modePools:
 		base = m.viewPools()
+	case modeShares:
+		base = m.viewShares()
 	default:
 		base = m.viewBrowse()
 	}
@@ -1625,6 +1691,13 @@ func (m model) viewPools() string {
 	header := m.header(dimStyle.Render("  · pools"))
 	body := m.pv.view(m.width, m.height-3)
 	foot := footerStyle.Render(" ↵/d drill-down  s scrub  S stop  t trim  c clear  i importable  r reload  esc back  ? help")
+	return lipgloss.JoinVertical(lipgloss.Left, header, body, foot)
+}
+
+func (m model) viewShares() string {
+	header := m.header(dimStyle.Render("  · shares"))
+	body := m.sv.view(m.width, m.height-3)
+	foot := footerStyle.Render(" ↵/d detail  g go to dataset  r reload  esc back  ? help")
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, foot)
 }
 
